@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-20
+
+### Added
+
+- The built-in `/list-agents` command (alias `/peers`) shows the LAN agents after its own output, in the words `ListAgents` uses; with no peers it says none are seen yet and points at `/a2a lan`. With LAN mode off it is the built-in's own; with the sidecar down it gains one line. The model's notes from the command are left as they were.
+
+### Security
+
+- An inbound LAN message can no longer close or reopen its frame with a lookalike tag: zero-width characters, soft hyphens or spaces inside the name, full-width or small angle brackets, full-width letters and solidus, and dash lookalikes (U+2010-U+2015, U+2212, U+FE58, U+FE63, U+FF0D) are folded before the check, and only the bracket is escaped, so the rest of the text (emoji sequences included) arrives as sent.
+
 ## [0.6.0] - 2026-10-20
 
 ### Added

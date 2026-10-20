@@ -83,7 +83,7 @@ The token is read from a command, a file or a setting, and never typed into Clau
 
 ## LAN mode
 
-Every Claude Code session on the network that runs this mod in the same LAN mode shows up in the built-in `ListAgents` tool as `lan:<host>/<folder>`, next to the sessions on this machine and the A2A workers you registered (`a2a:<alias>`). Claude talks to them with the built-in `SendMessage` (`to: "lan:<name>"`, or `"a2a:<alias>"` for a worker) and sends files with `SendFile`; where the build has no `SendFile`, the mod adds a `send_file` tool.
+Every Claude Code session on the network that runs this mod in the same LAN mode shows up in the built-in `ListAgents` tool as `lan:<host>/<folder>`, next to the sessions on this machine and the A2A workers you registered (`a2a:<alias>`). Claude talks to them with the built-in `SendMessage` (`to: "lan:<name>"`, or `"a2a:<alias>"` for a worker) and sends files with `SendFile`; where the build has no `SendFile`, the mod adds a `send_file` tool. You see the same LAN agents at the end of the built-in `/list-agents` command (alias `/peers`), after the engine's own list.
 
 LAN mode is **on by default, in open mode**: no secret, no setup. It has three modes, and `/a2a lan` says which one runs:
 
@@ -136,7 +136,7 @@ A message that goes A → B but times out B → A means A reaches B's TCP port b
 
 ### LAN 模式（繁體中文）
 
-同一個區網裡、裝了這個 mod 且使用相同 LAN 模式的每個 Claude Code session，都會出現在內建的 `ListAgents` 工具裡，名稱是 `lan:<主機>/<資料夾>`，和本機的 session、你登記的 A2A worker（`a2a:<alias>`）並列。Claude 用內建的 `SendMessage`（`to: "lan:<名稱>"`，worker 則是 `"a2a:<alias>"`）傳訊息，用 `SendFile` 傳檔案；這個版本的 Claude Code 沒有 `SendFile` 時，mod 會改提供 `send_file` 工具。
+同一個區網裡、裝了這個 mod 且使用相同 LAN 模式的每個 Claude Code session，都會出現在內建的 `ListAgents` 工具裡，名稱是 `lan:<主機>/<資料夾>`，和本機的 session、你登記的 A2A worker（`a2a:<alias>`）並列。Claude 用內建的 `SendMessage`（`to: "lan:<名稱>"`，worker 則是 `"a2a:<alias>"`）傳訊息，用 `SendFile` 傳檔案；這個版本的 Claude Code 沒有 `SendFile` 時，mod 會改提供 `send_file` 工具。你自己執行內建的 `/list-agents` 指令（別名 `/peers`）時，同樣的 LAN agent 也會列在內建清單後面。
 
 LAN 模式**預設開啟，且為公開（open）模式**：不需密鑰、不需設定。共有三種模式，`/a2a lan` 會顯示目前是哪一種：
 

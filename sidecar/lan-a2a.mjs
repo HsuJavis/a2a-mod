@@ -20,7 +20,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { pipeline } from 'node:stream/promises'
 
-const VERSION = '0.6.0'
+const VERSION = '0.6.1'
 const APP = 'a2a-mod-lan'
 const MCAST_ADDR = '239.255.41.99'
 const MCAST_PORT = 41399
