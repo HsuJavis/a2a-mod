@@ -1,13 +1,13 @@
 {
   "name": "a2a-mod",
-  "version": "0.3.1",
-  "description": "A2A protocol client for Claude Code: Claude hands tasks to non-Claude worker agents over Agent2Agent and picks up their results.",
+  "version": "0.4.0",
+  "description": "A2A protocol client for Claude Code: Claude hands tasks to non-Claude worker agents over Agent2Agent and picks up their results. LAN mode: Claude Code sessions on the same network find each other and exchange messages and files.",
   "author": {
-    "name": "Aliasgar Khimani",
-    "url": "https://github.com/NovusEdge"
+    "name": "HsuJavis",
+    "url": "https://github.com/HsuJavis"
   },
-  "homepage": "https://github.com/NovusEdge/a2a-mod",
-  "repository": "https://github.com/NovusEdge/a2a-mod",
+  "homepage": "https://github.com/HsuJavis/a2a-mod",
+  "repository": "https://github.com/HsuJavis/a2a-mod",
   "license": "MIT",
   "keywords": [
     "a2a",
@@ -16,7 +16,8 @@
     "orchestration",
     "agents",
     "interop",
-    "mod"
+    "mod",
+    "lan"
   ],
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -42,6 +43,29 @@
       "title": "Worker tokens",
       "description": "alias=token pairs separated by spaces, e.g. \"w1=abc w2=def\"",
       "sensitive": true
+    },
+    "lanSecret": {
+      "type": "string",
+      "title": "LAN shared secret",
+      "description": "LAN mode: the same secret (8+ characters) on every machine whose Claude Code sessions should see each other. Empty: LAN mode is off.",
+      "sensitive": true
+    },
+    "lanName": {
+      "type": "string",
+      "title": "LAN name",
+      "description": "LAN mode: the name other sessions address this one by (lan:<name>). Empty: <hostname>/<folder>."
+    }
+  },
+  "mcpServers": {
+    "lan": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/sidecar/lan-a2a.mjs"
+      ],
+      "env": {
+        "A2A_MOD_LAN_SECRET": "${user_config.lanSecret}",
+        "A2A_MOD_LAN_NAME": "${user_config.lanName}"
+      }
     }
   }
 }
