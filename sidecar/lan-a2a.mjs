@@ -32,7 +32,7 @@ const OPEN_GROUP = 'open' // not 16 hex digits, so never a secret's group
 const log = (...a) => process.stderr.write(`[lan-a2a] ${a.join(' ')}\n`)
 
 const self = { id: crypto.randomUUID(), mode: 'off', name: '', secret: '', group: '', port: 0, problem: '' }
-const peers = new Map() // id -> { id, name, host, port, lastSeen }
+const peers = new Map() // id -> { id, name, host, hosts, port, lastSeen }: host the latest source, hosts all of them
 const inbox = []
 const served = new Map() // file id -> { path, size, expires }
 let server
@@ -135,10 +135,13 @@ function onAnnounce(buf, rinfo) {
   if (m?.app !== APP || m.v !== 1 || m.group !== self.group || m.id === self.id || !/^[\w-]{1,64}$/.test(m.id)) return
   if (m.kind === 'bye') { peers.delete(m.id); return }
   if (m.kind !== 'hello' || !Number.isInteger(m.port) || m.port <= 0 || m.port > 65535) return
-  const isNew = !peers.has(m.id)
-  peers.set(m.id, { id: m.id.slice(0, 64), name: cleanName(m.name) || 'unnamed', host: bareIp(rinfo.address), port: m.port, lastSeen: Date.now() })
+  const was = peers.get(m.id)
+  const host = bareIp(rinfo.address)
+  // A session announces from each interface, so one peer is heard from several addresses.
+  const hosts = new Set([...(was?.hosts ?? []), host].slice(-8))
+  peers.set(m.id, { id: m.id, name: cleanName(m.name) || 'unnamed', host, hosts, port: m.port, lastSeen: Date.now() })
   // Answer a newcomer at once so it need not wait a full period; rate-limited against storms.
-  if (isNew && Date.now() - lastReply > 300) { lastReply = Date.now(); void announce('hello') }
+  if (!was && Date.now() - lastReply > 300) { lastReply = Date.now(); void announce('hello') }
 }
 
 function startDiscovery() {
@@ -255,8 +258,8 @@ function download(file, senderIp) {
 
 async function receive(message, senderIp) {
   const meta = message?.metadata?.lanA2a
-  // A peer's name only for a message from that peer's own host: anyone can put its id in metadata.
-  const known = typeof meta?.fromId === 'string' ? peerList().find(p => p.id === meta.fromId && p.host === senderIp) : undefined
+  // A peer's name only for a message from an address that peer announced from: anyone can put its id in metadata.
+  const known = peers.get(meta?.fromId)?.hosts.has(senderIp) ? peerList().find(p => p.id === meta.fromId) : undefined
   const from = known?.address ?? `a2a:${senderIp}`
   const { text, files } = partsOf(message)
   const saved = await Promise.all(files.map(f => download(f, senderIp)))

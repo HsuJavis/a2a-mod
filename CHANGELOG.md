@@ -23,8 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A LAN message's text could close its `<lan-message>` frame and forge the mod's header lines; every `lan-message` tag in it, in any case or spacing, is made inert. Peer names and addresses keep to letters, digits and `. _ / -` (64 characters), and hosts to IP characters.
-- A message naming another peer's id in its metadata showed under that peer's name from any host; the name now needs the message to come from that peer's host.
+- A LAN message's text could close its `<lan-message>` frame and forge the mod's header lines; every `lan-message` tag in it, in any case or spacing (zero-width characters included), is made inert. Peer names and addresses keep to letters, digits and `. _ / -` (64 characters), and hosts to IP characters.
+- A message naming another peer's id in its metadata showed under that peer's name from any host; the name now needs the message to come from an address that peer announced from.
 
 ## [0.4.0] - 2026-10-20
 

@@ -90,8 +90,8 @@ const fileLine = (f: LanFile) => f.path
   ? `  ${f.path} (${f.size ?? '?'} bytes, sha256 ${f.sha256 ?? '?'})`
   : `  ${f.name}: not saved (${f.error ?? 'unknown error'})`
 
-/** The text with every <lan-message> tag, opening or closing, in any case or spacing, made inert. */
-export const inert = (text: string) => text.replace(/<(?=\s*\/?\s*lan-message)/gi, '&lt;')
+/** The text with every <lan-message> tag, opening or closing, in any case or spacing (zero-width too), made inert. */
+export const inert = (text: string) => text.replace(/<(?=[\s\p{Cf}]*\/?[\s\p{Cf}]*lan-message)/giu, '&lt;')
 
 /**
  * What Claude reads for one message in. Another agent wrote it, so it is framed as data, not as the
