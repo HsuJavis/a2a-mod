@@ -96,8 +96,11 @@ export type LanPeer = { address: string; name: string; host: string; port: numbe
 /** One file a LAN message carried, as the sidecar saved it: `path` and `sha256` once downloaded, `error` when not. */
 export type LanFile = { name: string; path?: string; size?: number; sha256?: string; error?: string }
 
-/** A message another session sent here. `from` is `lan:<name>`, or `a2a:<ip>` for any other A2A client. */
-export type LanMessage = { from: string; text: string; files: LanFile[]; receivedAt: number }
+/**
+ * A message another session sent here. `from` is `lan:<name>`, or `a2a:<ip>` for any other A2A client;
+ * `host` the IP it came from; `authenticated` true only when it carried the shared secret.
+ */
+export type LanMessage = { from: string; host?: string; authenticated?: boolean; text: string; files: LanFile[]; receivedAt: number }
 
 /** LAN mode as the pane draws it: this session's address (empty while off), the peers seen, the last messages in. */
 export type LanView = { address: string; peers: LanPeer[]; received: LanMessage[] }

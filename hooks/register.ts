@@ -4,7 +4,7 @@ import type { LanPeer, LanView, PaneView, RecentState, RecentTask, SentReply, Wo
 import { A2AError, cancelTask, getTask, send } from './client.ts'
 import { runCommand, USAGE } from './command.ts'
 import { describeOutcome, FULL_MAX, wakeDetail, wakeLine } from './format.ts'
-import { agentSections, EMPTY_LAN, framed, isA2a, isLan, LAN_SERVER, LanDown, messagesOf, nextView, offText, peerSection, peersOf, POLL_LAN_MS, resultOf, sendFileResult, sendFileText, sentResult, SIDECAR_DENY, toastText, type LanStatus, type Sidecar } from './lan.ts'
+import { agentSections, EMPTY_LAN, framed, isA2a, isLan, LAN_SERVER, LanDown, messagesOf, modeLine, nextView, offText, peerSection, peersOf, POLL_LAN_MS, resultOf, sendFileResult, sendFileText, sentResult, SIDECAR_DENY, toastText, type LanStatus, type Sidecar } from './lan.ts'
 import { addWorkerTool, removeWorkerTool, type Confirm } from './manage.ts'
 import { changeRecent, isOpen, isWaiting, noteCall, noteSent, noteState, readRecent, visible } from './recent.ts'
 import { loadWorkers, noteFailure, own, parseTokens, targetOf, workerOr, type Host, type SettingTokens } from './registry.ts'
@@ -335,7 +335,7 @@ async function pollLan($: Engine, address: string): Promise<void> {
   }
 }
 
-// With no secret the sidecar opens no socket and nothing here runs, so the mod behaves as upstream's.
+// With the lan option false the sidecar opens no socket and nothing here runs, so the mod behaves as upstream's.
 async function startLan($: Engine): Promise<void> {
   const { status } = await lanNow($)
   const address = status?.configured ? status.address : ''
@@ -350,8 +350,8 @@ async function startLan($: Engine): Promise<void> {
 export const register: Register = (on, options) => {
   const settingTokens = parseTokens(options.tokens)
   const ui = parseSettings(options)
-  // Set means the person wants LAN mode, so a sidecar that is not there is worth a line in ListAgents.
-  const lanWanted = String(options.lanSecret ?? '') !== ''
+  // LAN mode is on unless the lan option is false; on, a sidecar that is not there is worth a line in ListAgents.
+  const lanWanted = String(options.lan) !== 'false'
   // Not in $.state: a write per keystroke would redraw the pane under the person's typing.
   const drafts = new Map<string, string>()
   let paneExpiry: Timer | undefined
@@ -365,7 +365,7 @@ export const register: Register = (on, options) => {
     await resume(hostOf($, settingTokens, ui))
     // The engine keeps a pane open across reloads, so one opened under another layout would stay.
     if (ui.layout === 'minimal') try { await $.ui.close({ id: PANE.id }) } catch {}
-    try { await startLan($) } catch {}
+    if (lanWanted) try { await startLan($) } catch {}
     return next(e)
   })
 
@@ -373,7 +373,7 @@ export const register: Register = (on, options) => {
     const sub = e.args.trim().split(/\s+/)[0]
     if (sub === 'lan') {
       const { status, peers, down } = await lanNow($)
-      return { text: status?.configured ? `This session is ${status.address}, listening on port ${status.port}.\n\n${peerSection(status.address, peers)}` : offText(status, down) }
+      return { text: status?.configured ? `${modeLine(status.mode)}\nThis session is ${status.address}, listening on port ${status.port}.\n\n${peerSection(status.address, peers)}` : offText(status, down) }
     }
     if (sub) {
       const text = await runCommand(hostOf($, settingTokens, ui), e.args)
@@ -516,8 +516,8 @@ export const register: Register = (on, options) => {
     const out = await next(e)
     if (out.deny !== undefined || out.isError || typeof out.result?.listing !== 'string') return out
     const workers = Object.values(await loadWorkers(hostOf($, settingTokens, ui))).sort((a, b) => a.addedAt - b.addedAt)
-    const lan = await lanNow($)
-    const sections = agentSections(lanWanted ? lan : { ...lan, down: undefined }, workers)
+    const lan = lanWanted ? await lanNow($) : { peers: [] }
+    const sections = agentSections(lan, workers)
     if (!sections.length) return out
     // A fresh object: the one next gave carries core's ref, and core would send its own listing.
     return { result: { ...out.result, listing: [out.result.listing, ...sections].join('\n\n') } }

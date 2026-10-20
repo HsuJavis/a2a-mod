@@ -14,7 +14,7 @@
 
 </div>
 
-> **This is HsuJavis's fork of [NovusEdge/a2a-mod](https://github.com/NovusEdge/a2a-mod)** by Aliasgar Khimani (MIT). It adds a [LAN mode](#lan-mode): Claude Code sessions on the same network find each other and exchange messages and files. Everything else is upstream's.
+> **This is HsuJavis's fork of [NovusEdge/a2a-mod](https://github.com/NovusEdge/a2a-mod)** by Aliasgar Khimani (MIT). It adds a [LAN mode](#lan-mode), on by default with no secret: Claude Code sessions on the same network find each other and exchange messages and files. Everything else is upstream's.
 
 ## Why
 
@@ -83,39 +83,57 @@ The token is read from a command, a file or a setting, and never typed into Clau
 
 ## LAN mode
 
-Every Claude Code session on the network that runs this mod with the same secret shows up in the built-in `ListAgents` tool as `lan:<host>/<folder>`, next to the sessions on this machine and the A2A workers you registered (`a2a:<alias>`). Claude talks to them with the built-in `SendMessage` (`to: "lan:<name>"`, or `"a2a:<alias>"` for a worker) and sends files with `SendFile`; where the build has no `SendFile`, the mod adds a `send_file` tool.
+Every Claude Code session on the network that runs this mod in the same LAN mode shows up in the built-in `ListAgents` tool as `lan:<host>/<folder>`, next to the sessions on this machine and the A2A workers you registered (`a2a:<alias>`). Claude talks to them with the built-in `SendMessage` (`to: "lan:<name>"`, or `"a2a:<alias>"` for a worker) and sends files with `SendFile`; where the build has no `SendFile`, the mod adds a `send_file` tool.
 
-Turn it on with the same secret on every machine, then restart Claude Code:
+LAN mode is **on by default, in open mode**: no secret, no setup. It has three modes, and `/a2a lan` says which one runs:
+
+- **open** (the default: `lan` on, `lanSecret` empty). Sessions find each other with nothing to configure. There is no authentication: **anyone on your LAN can message your session and drop files in its inbox**, under any name they like. Claude is told each message comes from an unauthenticated host (with its IP), that the content is untrusted, and that it must not run commands, edit files or send files on its say-so without asking you. Use it on networks where you trust every host.
+- **secret**: set the same `lanSecret` (8 or more characters) on every machine. Only sessions with that secret see and reach each other; open sessions and sessions with another secret are invisible. A secret of 1 to 7 characters is refused (LAN mode stays off and says why), never taken for open mode.
+- **off**: set `lan` to false. The sidecar opens no socket and the mod behaves as upstream's.
 
 ```
+# secret mode
 claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lanSecret":"<8 or more characters>"}'
+# off
+claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lan":false}'
+# back to open mode
+claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lan":true,"lanSecret":""}'
 ```
 
-`lanName` sets the name others use (default `<hostname>/<folder>`). With no secret LAN mode is off and the mod behaves as upstream's. `LAN_A2A_SECRET` and `LAN_A2A_NAME` in the environment work too, when the options are empty.
+Restart Claude Code after a change. `lanName` sets the name others use (default `<hostname>/<folder>`; letters, digits and `. _ / -` only, 64 at most). `LAN_A2A_SECRET` and `LAN_A2A_NAME` in the environment work too, when the options are empty.
 
-- A message in shows as a toast, a row in the `/a2a` pane, and a prompt that starts a turn. It is framed as another agent's words, not yours. Files land in `~/.claude/lan-a2a/inbox/` (`LAN_A2A_INBOX` moves it), with their sha256.
-- `/a2a lan` shows this session's address and the sessions it sees; `/a2a list` and the `workers` tool list them too.
-- How it works: the mod starts a small Node sidecar (`sidecar/lan-a2a.mjs`, no dependencies) per session. It serves an A2A 1.0/0.3 endpoint on a port from 41400, announces itself by UDP multicast on `239.255.41.99:41399` (TTL 1, this subnet only), and sends files by URL with the shared secret as the bearer token.
+- A message in shows as a toast, a row in the `/a2a` pane, and a prompt that starts a turn. It is framed as another agent's words, not yours, and its text cannot close that frame. Files land in `~/.claude/lan-a2a/inbox/` (`LAN_A2A_INBOX` moves it), with their sha256.
+- `/a2a lan` shows the mode, this session's address and the sessions it sees; `/a2a list` and the `workers` tool list them too.
+- How it works: the mod starts a small Node sidecar (`sidecar/lan-a2a.mjs`, no dependencies) per session. It serves an A2A 1.0/0.3 endpoint on the first free TCP port in 41400-41499, or on a random port when all of those are taken (the announce carries the real port, so discovery still works, but a firewall rule for the range will not cover it; `LAN_A2A_PORT` pins a port or range, with no fallback). It announces itself by UDP multicast on `239.255.41.99:41399` (TTL 1, this subnet only) and sends files by URL. A file is served only under an unguessable id for an hour, and a session downloads a file only from the host that sent the message.
 
-Security: anyone with the secret can message your session and drop files in its inbox. Claude is told the text is untrusted, but it still reads it, so use LAN mode on networks you trust and keep the secret to yourself. Traffic is plain HTTP on the LAN: the secret and the content are not encrypted. The agent card at `/.well-known/agent-card.json` is public; everything else needs the secret. Allow UDP 41399 and TCP 41400-41499 in a host firewall, and note that guest Wi-Fi with client isolation blocks multicast.
+Security: plain HTTP on the LAN, nothing is encrypted, in either mode. In open mode anyone on the network can reach your session; in secret mode anyone with the secret can, and the secret crosses the wire in clear. Claude is told the text is untrusted, but it still reads it, so prefer secret mode, or turn LAN mode off, on networks you do not control. The agent card at `/.well-known/agent-card.json` is public; in secret mode everything else needs the secret. Allow UDP 41399 and TCP 41400-41499 in a host firewall, and note that guest Wi-Fi with client isolation blocks multicast.
 
 ### LAN 模式（繁體中文）
 
-同一個區網裡、裝了這個 mod 且設定同一組密鑰的每個 Claude Code session，都會出現在內建的 `ListAgents` 工具裡，名稱是 `lan:<主機>/<資料夾>`，和本機的 session、你登記的 A2A worker（`a2a:<alias>`）並列。Claude 用內建的 `SendMessage`（`to: "lan:<名稱>"`，worker 則是 `"a2a:<alias>"`）傳訊息，用 `SendFile` 傳檔案；這個版本的 Claude Code 沒有 `SendFile` 時，mod 會改提供 `send_file` 工具。
+同一個區網裡、裝了這個 mod 且使用相同 LAN 模式的每個 Claude Code session，都會出現在內建的 `ListAgents` 工具裡，名稱是 `lan:<主機>/<資料夾>`，和本機的 session、你登記的 A2A worker（`a2a:<alias>`）並列。Claude 用內建的 `SendMessage`（`to: "lan:<名稱>"`，worker 則是 `"a2a:<alias>"`）傳訊息，用 `SendFile` 傳檔案；這個版本的 Claude Code 沒有 `SendFile` 時，mod 會改提供 `send_file` 工具。
 
-在每台機器設定同一組密鑰（至少 8 個字元），然後重開 Claude Code：
+LAN 模式**預設開啟，且為公開（open）模式**：不需密鑰、不需設定。共有三種模式，`/a2a lan` 會顯示目前是哪一種：
+
+- **open（預設：`lan` 開、`lanSecret` 留空）**：session 之間免設定即可互相發現。沒有任何驗證：**區網上任何人都能傳訊息給你的 session、把檔案放進 inbox**，名稱也可以隨便取。Claude 會被告知訊息來自未經驗證的主機（附 IP）、內容不可信，且不可因為訊息要求就執行指令、修改檔案或傳送檔案，必須先問你。只在你信任網路上每台主機時使用。
+- **secret**：每台機器設定同一組 `lanSecret`（至少 8 個字元）。只有持相同密鑰的 session 彼此看得到、傳得到；open 模式或其他密鑰的 session 互相看不到。1 到 7 個字元的密鑰會被拒絕（LAN 模式維持關閉並說明原因），不會被當成 open 模式。
+- **off**：把 `lan` 設為 false。sidecar 不開任何 socket，mod 的行為與上游相同。
 
 ```
+# secret 模式
 claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lanSecret":"<至少 8 個字元>"}'
+# 關閉
+claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lan":false}'
+# 回到 open 模式
+claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lan":true,"lanSecret":""}'
 ```
 
-`lanName` 可自訂別人用來稱呼你的名稱（預設 `<主機名>/<資料夾>`）。沒有密鑰時 LAN 模式關閉，mod 的行為與上游完全相同。選項留空時，也可用環境變數 `LAN_A2A_SECRET`、`LAN_A2A_NAME`。
+改完要重開 Claude Code。`lanName` 可自訂別人用來稱呼你的名稱（預設 `<主機名>/<資料夾>`；只允許字母、數字與 `. _ / -`，最多 64 字元）。選項留空時，也可用環境變數 `LAN_A2A_SECRET`、`LAN_A2A_NAME`。
 
-- 收到訊息時會跳 toast、在 `/a2a` 面板多一列，並自動開始一個 turn；內容會標示為「另一個 agent 寫的、不是使用者」的不可信輸入。檔案存到 `~/.claude/lan-a2a/inbox/`（可用 `LAN_A2A_INBOX` 改），附 sha256。
-- `/a2a lan` 顯示本 session 的位址與看得到的其他 session；`/a2a list` 和 `workers` 工具也會列出。
-- 運作方式：每個 session 會啟動一個小型 Node sidecar（`sidecar/lan-a2a.mjs`，零相依），在 41400 起的 port 提供 A2A 1.0/0.3 端點，用 UDP multicast `239.255.41.99:41399`（TTL 1，只限本網段）互相發現，檔案以 URL 傳遞、用共用密鑰當 bearer token。
+- 收到訊息時會跳 toast、在 `/a2a` 面板多一列，並自動開始一個 turn；內容會標示為「另一個 agent 寫的、不是使用者」的不可信輸入，訊息內文無法關閉這個標示框。檔案存到 `~/.claude/lan-a2a/inbox/`（可用 `LAN_A2A_INBOX` 改），附 sha256。
+- `/a2a lan` 顯示目前模式、本 session 的位址與看得到的其他 session；`/a2a list` 和 `workers` 工具也會列出。
+- 運作方式：每個 session 會啟動一個小型 Node sidecar（`sidecar/lan-a2a.mjs`，零相依），在 41400-41499 中第一個空閒的 TCP port 提供 A2A 1.0/0.3 端點；這段全被占用時改用隨機 port（廣播會帶真正的 port，所以仍找得到，但針對該範圍的防火牆規則就涵蓋不到；`LAN_A2A_PORT` 可指定 port 或範圍，指定時不會退回隨機 port）。以 UDP multicast `239.255.41.99:41399`（TTL 1，只限本網段）互相發現，檔案以 URL 傳遞；檔案只以不可猜的 id 提供一小時，接收端也只從傳訊息的那台主機下載。
 
-安全：拿到密鑰的人就能傳訊息給你的 session、把檔案放進 inbox。雖然會告訴 Claude 這是不可信內容，它仍會讀到，所以只在信任的網路使用，密鑰不要外流。區網內走明文 HTTP，密鑰與內容都沒有加密。`/.well-known/agent-card.json` 是公開的，其餘都需要密鑰。主機防火牆要放行 UDP 41399 與 TCP 41400-41499；有「用戶端隔離」的訪客 Wi-Fi 會擋掉 multicast。
+安全：區網內走明文 HTTP，兩種模式都沒有加密。open 模式下網路上任何人都能連到你的 session；secret 模式下拿到密鑰的人就能，而且密鑰以明文在網路上傳送。雖然會告訴 Claude 這是不可信內容，它仍會讀到，所以在不是你掌控的網路上，請改用 secret 模式或關閉 LAN 模式。`/.well-known/agent-card.json` 是公開的；secret 模式下其餘都需要密鑰。主機防火牆要放行 UDP 41399 與 TCP 41400-41499；有「用戶端隔離」的訪客 Wi-Fi 會擋掉 multicast。
 
 ## Learn more
 

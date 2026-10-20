@@ -10,7 +10,7 @@ export const USAGE = [
   '      (re-run to refresh; with no token flag the token comes from the tokens setting)',
   '  /a2a list',
   '  /a2a remove <alias>',
-  '  /a2a lan    (LAN mode: this session\'s address and the sessions it sees)',
+  '  /a2a lan    (LAN mode: open, secret or off, this session\'s address and the sessions it sees)',
   '',
   'Never type a token here: slash commands are kept in the transcript.',
 ].join('\n')

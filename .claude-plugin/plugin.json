@@ -1,6 +1,6 @@
 {
   "name": "a2a-mod",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A2A protocol client for Claude Code: Claude hands tasks to non-Claude worker agents over Agent2Agent and picks up their results. LAN mode: Claude Code sessions on the same network find each other and exchange messages and files.",
   "author": {
     "name": "HsuJavis",
@@ -44,10 +44,16 @@
       "description": "alias=token pairs separated by spaces, e.g. \"w1=abc w2=def\"",
       "sensitive": true
     },
+    "lan": {
+      "type": "boolean",
+      "title": "LAN mode",
+      "description": "On: Claude Code sessions on this network find each other and exchange messages and files (open mode with no lanSecret: any host on the LAN can message this session). Off: no sockets, the mod behaves as upstream's.",
+      "default": true
+    },
     "lanSecret": {
       "type": "string",
       "title": "LAN shared secret",
-      "description": "LAN mode: the same secret (8+ characters) on every machine whose Claude Code sessions should see each other. Empty: LAN mode is off.",
+      "description": "LAN mode: empty for open mode (no authentication). Set the same secret (8+ characters) on every machine for secret mode: only sessions with it see and reach each other. 1-7 characters is refused.",
       "sensitive": true
     },
     "lanName": {
@@ -63,6 +69,7 @@
         "${CLAUDE_PLUGIN_ROOT}/sidecar/lan-a2a.mjs"
       ],
       "env": {
+        "A2A_MOD_LAN": "${user_config.lan}",
         "A2A_MOD_LAN_SECRET": "${user_config.lanSecret}",
         "A2A_MOD_LAN_NAME": "${user_config.lanName}"
       }

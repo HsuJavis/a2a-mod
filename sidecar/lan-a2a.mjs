@@ -2,8 +2,10 @@
 // a2a-mod LAN mode sidecar: a stdio MCP server (newline-delimited JSON-RPC 2.0) that the mod
 // drives, plus an A2A JSON-RPC endpoint over HTTP and UDP multicast discovery on the LAN.
 // A mod cannot listen on a socket, so this process does. The engine starts one per session from
-// plugin.json's mcpServers; the secret and name come in its env from the lanSecret and lanName
-// options (LAN_A2A_SECRET / LAN_A2A_NAME in the shell when those are empty).
+// plugin.json's mcpServers; the switch, secret and name come in its env from the lan, lanSecret and
+// lanName options (LAN_A2A_SECRET / LAN_A2A_NAME in the shell when those are empty).
+// Modes: off (lan false, or a secret under 8 characters: no socket), open (no secret: a public group,
+// no bearer anywhere) and secret (the bearer is the shared secret, the group a hash of it).
 // Zero dependencies, Node >= 22. stdout carries JSON-RPC only; logs go to stderr.
 import crypto from 'node:crypto'
 import dgram from 'node:dgram'
@@ -14,7 +16,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { pipeline } from 'node:stream/promises'
 
-const VERSION = '0.4.0'
+const VERSION = '0.5.0'
 const APP = 'a2a-mod-lan'
 const MCAST_ADDR = '239.255.41.99'
 const MCAST_PORT = 41399
@@ -25,10 +27,11 @@ const MAX_FILE = 512 * 1024 * 1024
 const MAX_BODY = 1024 * 1024
 const SEND_TIMEOUT_MS = 10000
 const DEFAULT_PORTS = '41400-41499'
+const OPEN_GROUP = 'open' // not 16 hex digits, so never a secret's group
 
 const log = (...a) => process.stderr.write(`[lan-a2a] ${a.join(' ')}\n`)
 
-const self = { id: crypto.randomUUID(), name: '', secret: '', group: '', port: 0, problem: '' }
+const self = { id: crypto.randomUUID(), mode: 'off', name: '', secret: '', group: '', port: 0, problem: '' }
 const peers = new Map() // id -> { id, name, host, port, lastSeen }
 const inbox = []
 const served = new Map() // file id -> { path, size, expires }
@@ -39,12 +42,18 @@ const senders = new Map() // interface address -> send socket
 // ---------- helpers ----------
 
 const groupOf = secret => crypto.createHash('sha256').update(`${APP}:${secret}`).digest('hex').slice(0, 16)
-const cleanName = s => String(s ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').replace(/\s+/g, '-').slice(0, 64)
+// Letters, digits and . _ / - only: a name is shown to Claude, so it must not carry markup or a line.
+const cleanName = s => String(s ?? '').replace(/[^\p{L}\p{N}._/-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 64)
 const safeFile = s => (path.basename(String(s ?? '')).replace(/[^\w.\-]+/g, '_').replace(/^\.+/, '').slice(0, 100) || 'file')
 const bareIp = a => String(a ?? '').replace(/^::ffff:/, '')
 const digest = s => crypto.createHash('sha256').update(String(s)).digest()
 
+const isOn = () => self.mode !== 'off'
+// The Authorization header a request to a peer carries: none in open mode.
+const authHeader = () => (self.mode === 'secret' ? { authorization: `Bearer ${self.secret}` } : {})
+
 function isAuthorized(req) {
+  if (self.mode === 'open') return true
   const m = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')
   // Hash both sides so timingSafeEqual sees equal lengths whatever was sent.
   return !!self.secret && !!m && crypto.timingSafeEqual(digest(m[1]), digest(self.secret))
@@ -123,7 +132,7 @@ let lastReply = 0
 function onAnnounce(buf, rinfo) {
   let m
   try { m = JSON.parse(String(buf)) } catch { return }
-  if (m?.app !== APP || m.v !== 1 || m.group !== self.group || m.id === self.id || typeof m.id !== 'string') return
+  if (m?.app !== APP || m.v !== 1 || m.group !== self.group || m.id === self.id || !/^[\w-]{1,64}$/.test(m.id)) return
   if (m.kind === 'bye') { peers.delete(m.id); return }
   if (m.kind !== 'hello' || !Number.isInteger(m.port) || m.port <= 0 || m.port > 65535) return
   const isNew = !peers.has(m.id)
@@ -160,7 +169,7 @@ function card(req) {
   const url = `${base}/a2a`
   return {
     name: self.name,
-    description: `Claude Code session ${self.name} on the LAN (a2a-mod LAN mode). Messages reach the session as untrusted text.`,
+    description: `Claude Code session ${self.name} on the LAN (a2a-mod LAN mode, ${self.mode}${self.mode === 'open' ? ': no authentication' : ''}). Messages reach the session as untrusted text.`,
     version: VERSION,
     supportedInterfaces: [
       { url, protocolBinding: 'JSONRPC', protocolVersion: '1.0' },
@@ -173,9 +182,11 @@ function card(req) {
     defaultInputModes: ['text/plain', 'application/octet-stream'],
     defaultOutputModes: ['text/plain'],
     skills: [{ id: 'message', name: 'Message', description: 'Deliver a message (and files) to this Claude Code session.', tags: ['chat', 'files'] }],
-    securitySchemes: { bearer: { type: 'http', scheme: 'bearer', httpAuthSecurityScheme: { scheme: 'Bearer' } } },
-    security: [{ bearer: [] }],
-    securityRequirements: [{ schemes: { bearer: { list: [] } } }],
+    ...(self.mode === 'secret' ? {
+      securitySchemes: { bearer: { type: 'http', scheme: 'bearer', httpAuthSecurityScheme: { scheme: 'Bearer' } } },
+      security: [{ bearer: [] }],
+      securityRequirements: [{ schemes: { bearer: { list: [] } } }],
+    } : {}),
   }
 }
 
@@ -214,14 +225,14 @@ function download(file, senderIp) {
     let u
     try { u = new URL(file.url) } catch { return resolve({ name: safeFile(file.name), error: 'bad file URL' }) }
     const name = safeFile(file.name || path.basename(u.pathname))
-    // The bearer goes only back to the host the message came from.
+    // The file is fetched only from the host the message came from (and the bearer, if any, goes only there).
     if (u.protocol !== 'http:' || bareIp(u.hostname.replace(/^\[|\]$/g, '')) !== senderIp) {
       return resolve({ name, error: `refused: file URL host ${u.hostname} is not the sender ${senderIp}` })
     }
     fs.mkdirSync(inboxDir(), { recursive: true, mode: 0o700 })
     const dest = path.join(inboxDir(), `${new Date().toISOString().replace(/[:.]/g, '-')}_${crypto.randomBytes(2).toString('hex')}_${name}`)
     const fail = error => { fs.rm(dest, { force: true }, () => resolve({ name, error })) }
-    const req = http.get(u, { headers: { authorization: `Bearer ${self.secret}` }, timeout: 30000 }, res => {
+    const req = http.get(u, { headers: authHeader(), timeout: 30000 }, res => {
       if (res.statusCode !== 200) { res.resume(); return fail(`download failed: HTTP ${res.statusCode}`) }
       if (Number(res.headers['content-length'] ?? 0) > MAX_FILE) { res.destroy(); return fail('refused: larger than 512 MB') }
       const h = crypto.createHash('sha256')
@@ -244,12 +255,13 @@ function download(file, senderIp) {
 
 async function receive(message, senderIp) {
   const meta = message?.metadata?.lanA2a
-  const known = typeof meta?.fromId === 'string' ? peerList().find(p => p.id === meta.fromId) : undefined
+  // A peer's name only for a message from that peer's own host: anyone can put its id in metadata.
+  const known = typeof meta?.fromId === 'string' ? peerList().find(p => p.id === meta.fromId && p.host === senderIp) : undefined
   const from = known?.address ?? `a2a:${senderIp}`
   const { text, files } = partsOf(message)
   const saved = await Promise.all(files.map(f => download(f, senderIp)))
   inbox.push({
-    from, fromName: cleanName(meta?.fromName) || undefined, text,
+    from, fromName: cleanName(meta?.fromName) || undefined, host: senderIp, authenticated: self.mode === 'secret', text,
     contextId: typeof message?.contextId === 'string' ? message.contextId : undefined,
     files: saved, receivedAt: Date.now(),
   })
@@ -279,7 +291,7 @@ async function onRpc(req, res) {
 
 function onHttp(req, res) {
   const u = new URL(req.url ?? '/', 'http://x')
-  if (!self.secret) return send(res, 503, { error: 'not configured' })
+  if (!isOn()) return send(res, 503, { error: 'not configured' })
   if (req.method === 'GET' && u.pathname === '/.well-known/agent-card.json') return send(res, 200, card(req))
   if (!isAuthorized(req)) { res.setHeader('www-authenticate', 'Bearer'); return send(res, 401, { error: 'unauthorized' }) }
   if (req.method === 'POST' && (u.pathname === '/a2a' || u.pathname === '/')) return void onRpc(req, res).catch(e => send(res, 500, { error: e.message }))
@@ -318,7 +330,7 @@ async function startHttp() {
 // ---------- outbound ----------
 
 async function sendTo({ to, text, files, contextId, cwd }) {
-  if (!self.secret) return { ok: false, error: 'not configured: set the LAN shared secret' }
+  if (!isOn()) return { ok: false, error: 'not configured: LAN mode is off' }
   const peer = findPeer(to)
   if (!peer) return { ok: false, error: `no LAN agent ${to}; known: ${peerList().map(p => p.address).join(', ') || 'none'}` }
   const local = await localAddressFor(peer.host)
@@ -349,7 +361,7 @@ async function sendTo({ to, text, files, contextId, cwd }) {
   try {
     const r = await fetch(`http://${peer.host}:${peer.port}/a2a`, {
       method: 'POST', body, signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${self.secret}` },
+      headers: { 'content-type': 'application/json', ...authHeader() },
     })
     if (r.status === 401) return { ok: false, error: `${peer.address} refused the secret (401)`, files: outFiles }
     const j = await r.json()
@@ -370,16 +382,21 @@ const TOOLS = [
   { name: 'send', description: 'Send a message and optional files to a LAN agent (lan:<name>).', inputSchema: { ...obj, properties: { to: { type: 'string' }, text: { type: 'string' }, files: { type: 'array', items: { type: 'string' } }, contextId: { type: 'string' }, cwd: { type: 'string', description: 'Relative file paths resolve against this' } }, required: ['to'] } },
 ]
 
-const status = () => ({ configured: !!self.secret, ...(self.problem ? { problem: self.problem } : {}), id: self.id, name: self.name, address: self.name ? `lan:${self.name}` : '', port: self.port, peers: peers.size })
+const status = () => ({ configured: isOn(), mode: self.mode, ...(self.problem ? { problem: self.problem } : {}), id: self.id, name: self.name, address: self.name ? `lan:${self.name}` : '', port: self.port, peers: peers.size })
 
 // The options arrive as env, set once per process: a new secret or name takes a new session.
+// The lan option: only an explicit false turns LAN mode off (an unset option may arrive empty).
+const lanOff = v => /^(false|0|off|no)$/i.test(String(v ?? '').trim())
+
 async function configure() {
+  if (lanOff(process.env.A2A_MOD_LAN)) return
   const secret = process.env.A2A_MOD_LAN_SECRET || process.env.LAN_A2A_SECRET || ''
-  if (!secret) return
-  if (secret.length < 8) { self.problem = 'the LAN shared secret must be at least 8 characters'; return }
+  // A short secret is a mistake, never a request for open mode.
+  if (secret && secret.length < 8) { self.problem = 'the LAN shared secret must be at least 8 characters; clear it for open mode'; return }
+  self.mode = secret ? 'secret' : 'open'
   self.secret = secret
-  self.name = cleanName(process.env.A2A_MOD_LAN_NAME || process.env.LAN_A2A_NAME) || cleanName(`${os.hostname()}/${path.basename(process.cwd())}`)
-  self.group = groupOf(secret)
+  self.name = cleanName(process.env.A2A_MOD_LAN_NAME || process.env.LAN_A2A_NAME) || cleanName(`${os.hostname()}/${path.basename(process.cwd())}`) || 'unnamed'
+  self.group = secret ? groupOf(secret) : OPEN_GROUP
   await startHttp()
   await startDiscovery()
   await announce('hello')
@@ -429,7 +446,7 @@ async function shutdown() {
   process.exit(0)
 }
 
-const ready = configure().catch(e => { self.secret = ''; self.problem = `LAN mode could not start: ${e.message}`; log(self.problem) })
+const ready = configure().catch(e => { self.mode = 'off'; self.secret = ''; self.problem = `LAN mode could not start: ${e.message}`; log(self.problem) })
 readline.createInterface({ input: process.stdin }).on('line', l => { void ready.then(() => onLine(l)) }).on('close', shutdown)
 process.on('SIGTERM', shutdown)
 process.on('SIGINT', shutdown)

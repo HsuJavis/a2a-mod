@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-20
+
+### Added
+
+- LAN open mode, now the default: with no `lanSecret`, sessions join a fixed public discovery group and talk with no bearer on `/a2a` or `/files` and no `Authorization` header out. Open and secret sessions do not see each other. Files are still served only by an unguessable id for an hour and fetched only from the sender's host.
+- A `lan` option (default on). Off, the sidecar opens no socket and the mod behaves as upstream's.
+- `/a2a lan` names the mode: open, secret or off.
+
+### Changed
+
+- `lanSecret` is optional: empty is open mode, 8 or more characters is secret mode as before, and 1 to 7 characters is refused with the reason instead of running.
+- A message from an open-mode sender is framed for Claude as coming from an unauthenticated LAN host, with its IP: untrusted content, and no commands, file edits or file sends on its say-so without the user's confirmation.
+- The README documents the modes, open mode's risks, and the random-port fallback past 41400-41499.
+
+### Fixed
+
+- A LAN message's text could close its `<lan-message>` frame and forge the mod's header lines; every `lan-message` tag in it, in any case or spacing, is made inert. Peer names and addresses keep to letters, digits and `. _ / -` (64 characters), and hosts to IP characters.
+- A message naming another peer's id in its metadata showed under that peer's name from any host; the name now needs the message to come from that peer's host.
+
 ## [0.4.0] - 2026-10-20
 
 ### Added

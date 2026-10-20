@@ -302,13 +302,15 @@ export const PEER = { address: 'lan:box/proj', name: 'box/proj', id: 'b0b0-1', h
 
 /** The plugin's userConfig with LAN mode on; the secret itself reaches only the sidecar's env. */
 export const WITH_LAN = { options: { tokens: 'fake=s3cret', lanSecret: 'lan-secret-1' } }
+/** LAN mode turned off with the lan option. */
+export const LAN_OFF = { options: { lan: false } }
 
 /**
- * Stands for sidecar/lan-a2a.mjs beneath $.mcp: `configured` false is a sidecar with no secret, `down`
+ * Stands for sidecar/lan-a2a.mjs beneath $.mcp: `configured` false is a sidecar with LAN mode off, `mode` open or secret (secret by default), `down`
  * one that could not be connected. Push onto `inbox` what the next poll drains. The session started
  * before the test's hooks were there, so LAN mode starts with `startSession`.
  */
-export function fakeSidecar(on: On, opts: { configured?: boolean; down?: string; peers?: unknown[]; cwd?: string; send?: (args: Record<string, unknown>) => unknown } = {}) {
+export function fakeSidecar(on: On, opts: { configured?: boolean; mode?: 'open' | 'secret'; down?: string; peers?: unknown[]; cwd?: string; send?: (args: Record<string, unknown>) => unknown } = {}) {
   on('session.cwd', async () => ({ value: opts.cwd ?? '/work' }))
   const calls: { tool: string; args: Record<string, unknown> }[] = []
   const inbox: unknown[] = []
@@ -319,7 +321,7 @@ export function fakeSidecar(on: On, opts: { configured?: boolean; down?: string;
   on('mcp.call', async (_$, e) => {
     calls.push({ tool: e.tool, args: e.args })
     const out: unknown =
-      e.tool === 'status' ? { configured, id: 'self', name: configured ? 'here/proj' : '', address: configured ? 'lan:here/proj' : '', port: configured ? 41400 : 0, peers: 1 }
+      e.tool === 'status' ? { configured, mode: configured ? (opts.mode ?? 'secret') : 'off', id: 'self', name: configured ? 'here/proj' : '', address: configured ? 'lan:here/proj' : '', port: configured ? 41400 : 0, peers: 1 }
       : e.tool === 'peers' ? { peers: opts.peers ?? [PEER] }
       : e.tool === 'inbox' ? { messages: inbox.splice(0) }
       : e.tool === 'send' ? (opts.send?.(e.args) ?? { ok: true, to: e.args.to, messageId: 'm-1', files: [] })
