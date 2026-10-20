@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-20
+
+### Added
+
+- LAN mode, in HsuJavis's fork: Claude Code sessions on one network that share the new `lanSecret` option find each other by UDP multicast and show in `ListAgents` as `lan:<host>/<folder>`, beside the registered workers as `a2a:<alias>`. `SendMessage` to `lan:<name>` or `a2a:<alias>`, and `SendFile` to `lan:<name>`, go through the mod; where the build has no `SendFile`, a `send_file` tool does. A message in is a toast, a row in the pane's LAN box, and a prompt framed as untrusted. `/a2a lan` shows the session's address. A per-session Node sidecar (`sidecar/lan-a2a.mjs`, declared in `mcpServers`) holds the sockets. With no secret nothing changes.
+
+### Changed
+
+- The manifest's author, homepage and repository, and the marketplace owner, point at the fork.
+
+### Fixed
+
+- Twelve band tests failed on Claude Code 2.1.304, whose test kit tags drawn trees with `part`; they compare with `toMatchObject` now.
+
 ## [0.3.1] - 2026-10-04
 
 ### Fixed
