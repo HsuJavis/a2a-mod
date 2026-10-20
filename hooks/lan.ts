@@ -164,13 +164,16 @@ export const toastText = (m: LanMessage) =>
 
 const peerLine = (p: LanPeer) => `  ${p.address}  (${p.host}:${p.port})`
 
+/** /list-agents' line when no other session is seen: the person can run /a2a lan, the model cannot. */
+export const NONE_SEEN_CMD = '  none seen yet (/a2a lan says what to check)'
+
 /** The sections ListAgents gains: LAN sessions while LAN mode runs, then the registered workers. */
-export function agentSections(lan: { status?: LanStatus; peers: LanPeer[]; down?: string }, workers: Worker[]): string[] {
+export function agentSections(lan: { status?: LanStatus; peers: LanPeer[]; down?: string }, workers: Worker[], none = '  none seen yet'): string[] {
   const out: string[] = []
   if (lan.status?.configured) {
     out.push([
       `LAN agents (a2a-mod LAN mode, this session is ${lan.status.address}; SendMessage or SendFile with to: "lan:<name>"):`,
-      ...(lan.peers.length ? lan.peers.map(peerLine) : ['  none seen yet']),
+      ...(lan.peers.length ? lan.peers.map(peerLine) : [none]),
     ].join('\n'))
   } else if (lan.down) {
     out.push(`LAN agents: ${offText(undefined, lan.down)}`)

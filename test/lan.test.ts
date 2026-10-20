@@ -1,7 +1,7 @@
 import { test, expect, mock, type Engine } from 'claude-code/testing'
 import { inert, OFF_HINT, peersOf, POLL_LAN_MS } from '../hooks/lan.ts'
 import { fixtures as f } from './fixtures.ts'
-import { engineUi, fakeNet, fakeSidecar, heldStore, LAN_OFF, PANE_PROPS, PEER, promptLog, runA2a, startSession, STORE, WITH_LAN, WITH_TOKEN } from './kit.ts'
+import { engineUi, fakeNet, fakeSidecar, heldStore, LAN_OFF, PANE_PROPS, PEER, promptLog, runA2a, startSession, STORE, WITH_LAN, WITH_TOKEN, type On } from './kit.ts'
 
 const NATIVE = 'Sessions on this machine:\n  main'
 
@@ -459,4 +459,64 @@ test('lookalike tags in a message cannot close or reopen the frame', WITH_LAN, a
   const text = prompts[0]!.text
   expect(tags(text)).toEqual({ open: 1, close: 1 })
   expect(text).toContain('hi 👨\u200d👩\u200d👧')
+})
+
+const NATIVE_CMD = 'Agents you can message:\n  main (this session)'
+const listAgentsCmd = async ($: Engine, on: On, native: () => unknown = () => ({ text: NATIVE_CMD, context: ['note for the model'] })) => {
+  on('command.run', { command: 'list-agents' }, async () => native() as never)
+  return $.command.run({ command: 'list-agents', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
+}
+
+test('/list-agents keeps the built-in’s output and adds the LAN agents, in ListAgents’ words', WITH_LAN, async ($, on) => {
+  mock.store(on, STORE)
+  fakeSidecar(on)
+  const out = await listAgentsCmd($, on)
+  expect(out.text).toBe(`${NATIVE_CMD}\n\nLAN agents (a2a-mod LAN mode, this session is lan:here/proj; SendMessage or SendFile with to: "lan:<name>"):\n  lan:box/proj  (192.168.1.5:40123)`)
+  // The person typed it: the LAN lines are for them, the model's notes are the built-in's own.
+  expect(out.context).toEqual(['note for the model'])
+})
+
+test('/list-agents with no peers says none seen and points at /a2a lan', WITH_LAN, async ($, on) => {
+  mock.store(on)
+  fakeSidecar(on, { peers: [] })
+  const text = (await listAgentsCmd($, on)).text ?? ''
+  expect(text.startsWith(`${NATIVE_CMD}\n\nLAN agents (a2a-mod LAN mode, this session is lan:here/proj`)).toBe(true)
+  expect(text).toContain('none seen yet')
+  expect(text).toContain('/a2a lan')
+})
+
+test('/list-agents with LAN mode off is the built-in’s own', async ($, on) => {
+  mock.store(on)
+  fakeSidecar(on, { configured: false })
+  const out = await listAgentsCmd($, on)
+  expect(out.text).toBe(NATIVE_CMD)
+  expect(out.context).toEqual(['note for the model'])
+})
+
+test('/list-agents with lan off never asks the sidecar', LAN_OFF, async ($, on) => {
+  mock.store(on)
+  const lan = fakeSidecar(on)
+  expect((await listAgentsCmd($, on)).text).toBe(NATIVE_CMD)
+  expect(lan.calls).toEqual([])
+})
+
+test('/list-agents with the sidecar down costs one line and keeps the built-in’s output', async ($, on) => {
+  mock.store(on)
+  fakeSidecar(on, { down: 'the server did not start' })
+  expect((await listAgentsCmd($, on)).text).toBe(`${NATIVE_CMD}\n\nLAN agents: a2a LAN mode is not running: the server did not start`)
+})
+
+test('/list-agents keeps the built-in’s output when the sidecar call throws', WITH_LAN, async ($, on) => {
+  mock.store(on)
+  on('session.cwd', async () => ({ value: '/work' }))
+  on('mcp.connect', async () => { throw new Error('boom') })
+  const text = (await listAgentsCmd($, on)).text ?? ''
+  expect(text.startsWith(NATIVE_CMD)).toBe(true)
+})
+
+test('/list-agents that printed nothing is left alone', WITH_LAN, async ($, on) => {
+  mock.store(on)
+  fakeSidecar(on)
+  const out = await listAgentsCmd($, on, () => ({ context: ['x'] }))
+  expect(out.text).toBeUndefined()
 })

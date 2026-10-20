@@ -4,7 +4,7 @@ import type { LanPeer, LanView, PaneView, RecentState, RecentTask, SentReply, Wo
 import { A2AError, cancelTask, getTask, send } from './client.ts'
 import { runCommand, USAGE } from './command.ts'
 import { describeOutcome, FULL_MAX, wakeDetail, wakeLine } from './format.ts'
-import { agentSections, EMPTY_LAN, framed, isA2a, isLan, LAN_SERVER, LanDown, messagesOf, modeLine, nextView, NO_PEERS_HINT, offText, peerSection, peersOf, POLL_LAN_MS, resultOf, sendFileResult, sendFileText, sentResult, SIDECAR_DENY, staticPeer, STATIC_USAGE, toastText, type LanStatus, type Sidecar } from './lan.ts'
+import { agentSections, EMPTY_LAN, framed, isA2a, isLan, LAN_SERVER, LanDown, messagesOf, modeLine, nextView, NO_PEERS_HINT, NONE_SEEN_CMD, offText, peerSection, peersOf, POLL_LAN_MS, resultOf, sendFileResult, sendFileText, sentResult, SIDECAR_DENY, staticPeer, STATIC_USAGE, toastText, type LanStatus, type Sidecar } from './lan.ts'
 import { addWorkerTool, removeWorkerTool, type Confirm } from './manage.ts'
 import { changeRecent, isOpen, isWaiting, noteCall, noteSent, noteState, readRecent, visible } from './recent.ts'
 import { loadWorkers, noteFailure, own, parseTokens, targetOf, workerOr, type Host, type SettingTokens } from './registry.ts'
@@ -560,6 +560,19 @@ export const register: Register = (on, options) => {
     if (!sections.length) return out
     // A fresh object: the one next gave carries core's ref, and core would send its own listing.
     return { result: { ...out.result, listing: [out.result.listing, ...sections].join('\n\n') } }
+  })
+
+  // /list-agents (alias /peers) as the person reads it: the built-in's output, then the LAN agents. Never worse than the built-in's.
+  on('command.run', { command: 'list-agents' }, async ($, e, next) => {
+    const out = await next(e)
+    if (!lanWanted || typeof out.text !== 'string') return out
+    try {
+      const sections = agentSections(await lanNow($), [], NONE_SEEN_CMD)
+      // A fresh object: the one next gave carries core's ref, and core would print its own text.
+      return sections.length ? { text: [out.text, ...sections].join('\n\n'), ...(out.context ? { context: out.context } : {}) } : out
+    } catch {
+      return out
+    }
   })
 
   on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
