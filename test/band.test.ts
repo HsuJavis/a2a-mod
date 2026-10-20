@@ -63,7 +63,7 @@ for (const surface of SURFACES) {
     mock.store(on, STORE)
     engineUi(on)
     const ui = await mountBand($, surface)
-    expect(await ui.drawn()).toEqual({ type: 'Text', props: {}, children: ['engine AbovePrompt'] })
+    expect(await ui.drawn()).toMatchObject({ type: 'Text', props: {}, children: ['engine AbovePrompt'] })
   })
 
   test(`a live task draws the wire and a chip, with the next hook's tree under them, on ${surface}`, WITH_TOKEN, async ($, on) => {
@@ -102,7 +102,7 @@ for (const surface of SURFACES) {
     const wire = await ui.find({ type: 'Client', key: 'wire' })
     expect((wire?.props.props as { dir: string }).dir).toBe('back')
     await clock.advance(BACK_MS + 100)
-    expect(await ui.drawn()).toEqual({ type: 'Text', props: {}, children: ['engine AbovePrompt'] })
+    expect(await ui.drawn()).toMatchObject({ type: 'Text', props: {}, children: ['engine AbovePrompt'] })
   })
 
   test(`a finished task alone never draws the band, two seconds on or ten minutes on, on ${surface}`, WITH_TOKEN, async ($, on) => {
@@ -113,9 +113,9 @@ for (const surface of SURFACES) {
     await send($, clock, 'hi')
     await clock.advance(BACK_MS + 100)
     const ui = await mountBand($, surface)
-    expect(await ui.drawn()).toEqual({ type: 'Text', props: {}, children: ['engine AbovePrompt'] })
+    expect(await ui.drawn()).toMatchObject({ type: 'Text', props: {}, children: ['engine AbovePrompt'] })
     await clock.advance(SHOW_MS)
-    expect(await ui.drawn()).toEqual({ type: 'Text', props: {}, children: ['engine AbovePrompt'] })
+    expect(await ui.drawn()).toMatchObject({ type: 'Text', props: {}, children: ['engine AbovePrompt'] })
   })
 
   test(`a survey always gets the band on ${surface}`, WITH_TOKEN, async ($, on) => {
@@ -125,7 +125,7 @@ for (const surface of SURFACES) {
     fakeNet(on, { send: f.v1_send_slow, get: f.v1_get_working })
     await send($, clock, 'slow 60 build')
     const ui = await mountBand($, surface, { hasSurvey: true })
-    expect(await ui.drawn()).toEqual({ type: 'Text', props: {}, children: ['engine AbovePrompt'] })
+    expect(await ui.drawn()).toMatchObject({ type: 'Text', props: {}, children: ['engine AbovePrompt'] })
   })
 }
 

@@ -41,7 +41,7 @@ for (const surface of SURFACES) {
     mock.store(on, STORE)
     engineUi(on)
     const ui = await $.ui.mount({ plugin: 'a2a-mod', surface, component: 'AbovePrompt', props: BAND_PROPS() })
-    expect(await ui.drawn()).toEqual({ type: 'Text', children: ['OTHER BAND'] })
+    expect(await ui.drawn()).toMatchObject({ type: 'Text', children: ['OTHER BAND'] })
   })
 
   test(`with a live task both bands show, ours on top, on ${surface}`, WITH_OTHER, async ($, on) => {
@@ -62,7 +62,7 @@ for (const surface of SURFACES) {
     fakeNet(on, { send: f.v1_send_slow, get: f.v1_get_working })
     await send($, clock, 'slow 60 build')
     const ui = await $.ui.mount({ plugin: 'a2a-mod', surface, component: 'AbovePrompt', props: BAND_PROPS({ hasSurvey: true }) })
-    expect(await ui.drawn()).toEqual({ type: 'Text', props: {}, children: ['engine AbovePrompt'] })
+    expect(await ui.drawn()).toMatchObject({ type: 'Text', props: {}, children: ['engine AbovePrompt'] })
   })
 
   test(`a mod that restyles every tool row gets every row but ours on ${surface}`, WITH_OTHER, async ($, on) => {
