@@ -115,8 +115,25 @@ const fileLine = (f: LanFile) => f.path
   ? `  ${f.path} (${f.size ?? '?'} bytes, sha256 ${f.sha256 ?? '?'})`
   : `  ${f.name}: not saved (${f.error ?? 'unknown error'})`
 
-/** The text with every <lan-message> tag, opening or closing, in any case or spacing (zero-width too), made inert. */
-export const inert = (text: string) => text.replace(/<(?=[\s\p{Cf}]*\/?[\s\p{Cf}]*lan-message)/giu, '&lt;')
+// One character as a reader might take it: NFKC (full-width and small forms), no whitespace or format
+// characters (zero-width, soft hyphen), every dash a hyphen, lower case.
+const foldChar = (ch: string) => ch.normalize('NFKC').replace(/[\s\p{Cf}]/gu, '').replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-').toLowerCase()
+
+/**
+ * The text with every <lan-message> tag, opening or closing, made inert: a bracket (`<` or a lookalike)
+ * whose folded text after it starts lan-message or /lan-message becomes &lt;. Folded per character, so
+ * no run of filler pushes the name out of reach; nothing else in the text changes.
+ */
+export function inert(text: string): string {
+  const chars = [...text]
+  const folded = chars.map(foldChar)
+  const flat = folded.join('')
+  let at = 0
+  return chars.map((ch, i) => {
+    at += folded[i]!.length
+    return folded[i] === '<' && /^\/?lan-message/.test(flat.slice(at, at + 12)) ? '&lt;' : ch
+  }).join('')
+}
 
 /**
  * What Claude reads for one message in. Another agent wrote it, so it is framed as data, not as the
