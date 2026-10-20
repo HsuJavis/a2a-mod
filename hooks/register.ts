@@ -4,7 +4,7 @@ import type { LanPeer, LanView, PaneView, RecentState, RecentTask, SentReply, Wo
 import { A2AError, cancelTask, getTask, send } from './client.ts'
 import { runCommand, USAGE } from './command.ts'
 import { describeOutcome, FULL_MAX, wakeDetail, wakeLine } from './format.ts'
-import { agentSections, EMPTY_LAN, framed, isA2a, isLan, LAN_SERVER, LanDown, messagesOf, nextView, offText, peerSection, peersOf, POLL_LAN_MS, resultOf, sendFileResult, sentText, SIDECAR_DENY, toastText, type LanStatus, type Sidecar } from './lan.ts'
+import { agentSections, EMPTY_LAN, framed, isA2a, isLan, LAN_SERVER, LanDown, messagesOf, nextView, offText, peerSection, peersOf, POLL_LAN_MS, resultOf, sendFileResult, sendFileText, sentResult, SIDECAR_DENY, toastText, type LanStatus, type Sidecar } from './lan.ts'
 import { addWorkerTool, removeWorkerTool, type Confirm } from './manage.ts'
 import { changeRecent, isOpen, isWaiting, noteCall, noteSent, noteState, readRecent, visible } from './recent.ts'
 import { loadWorkers, noteFailure, own, parseTokens, targetOf, workerOr, type Host, type SettingTokens } from './registry.ts'
@@ -524,12 +524,13 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
-    const to = e.to
+    const to = typeof e.to === 'string' ? e.to : ''
     if (!isA2a(to) && !isLan(to)) return next(e)
     // The tool's structured messages (shutdown requests and the like) are for teammates, not peers.
     const message = typeof e.message === 'string' ? e.message : JSON.stringify(e.message)
-    if (isA2a(to)) return { result: await sendTask($, hostOf($, settingTokens, ui), e.tool_use_id, next, { worker: to.slice('a2a:'.length), message }) }
-    return { result: sentText(to, await lanSend($, { to, text: message })) }
+    if (isLan(to)) return { result: sentResult(to, await lanSend($, { to, text: message })) }
+    const text = await sendTask($, hostOf($, settingTokens, ui), e.tool_use_id, next, { worker: to.slice('a2a:'.length), message })
+    return { result: { success: !/^(a2a: |No worker)/.test(text), message: text } }
   })
 
   on('tool.call', { tool: 'SendFile' }, async ($, e, next) => {
@@ -542,7 +543,7 @@ export const register: Register = (on, options) => {
     const to = String(input.to ?? '')
     if (!isLan(to)) return { result: `a2a lan: send_file takes a lan:<name> address from ListAgents, not ${to || 'nothing'}.` }
     const files = Array.isArray(input.files) ? input.files.map(String) : []
-    return { result: sendFileResult(to, await lanSend($, { to, text: String(input.message ?? ''), files })) }
+    return { result: sendFileText(sendFileResult(to, await lanSend($, { to, text: String(input.message ?? ''), files }))) }
   })
 
   on('tool.call', { tool: 'mcp__a2a-mod__add_worker' }, async ($, e) =>

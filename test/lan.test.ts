@@ -43,7 +43,8 @@ test('SendMessage to lan: goes through the sidecar with the session cwd', WITH_L
   mock.store(on)
   const lan = fakeSidecar(on, { cwd: '/work/proj' })
   const out = await $.tool.call({ tool: 'SendMessage', to: 'lan:box/proj', message: 'hello box', summary: 'greet' })
-  expect(String(out.result)).toContain('Delivered to lan:box/proj')
+  // An object: the engine's SendMessage mapper throws on a string.
+  expect(out.result).toEqual({ success: true, message: expect.stringContaining('Delivered to lan:box/proj') })
   expect(lan.sent()).toEqual([{ to: 'lan:box/proj', text: 'hello box', cwd: '/work/proj' }])
 })
 
@@ -51,14 +52,14 @@ test('SendMessage to an unknown lan: name gets the sidecar’s reason', WITH_LAN
   mock.store(on)
   fakeSidecar(on, { send: () => ({ ok: false, error: 'no LAN agent lan:nope; known: lan:box/proj' }) })
   const out = await $.tool.call({ tool: 'SendMessage', to: 'lan:nope', message: 'hi' })
-  expect(String(out.result)).toBe('a2a lan: no LAN agent lan:nope; known: lan:box/proj')
+  expect(out.result).toEqual({ success: false, message: 'a2a lan: no LAN agent lan:nope; known: lan:box/proj' })
 })
 
 test('SendMessage to lan: with LAN mode off says how to turn it on', async ($, on) => {
   mock.store(on)
   fakeSidecar(on, { configured: false, send: () => ({ ok: false, error: 'not configured: set the LAN shared secret' }) })
   const out = await $.tool.call({ tool: 'SendMessage', to: 'lan:box/proj', message: 'hi' })
-  expect(String(out.result)).toBe(OFF_HINT)
+  expect(out.result).toEqual({ success: false, message: OFF_HINT })
 })
 
 test('SendMessage to a2a:<alias> is the worker send, task tracking and all', WITH_TOKEN, async ($, on) => {
@@ -69,8 +70,10 @@ test('SendMessage to a2a:<alias> is the worker send, task tracking and all', WIT
   const p = $.tool.call({ tool: 'SendMessage', to: 'a2a:fake', message: 'hi' })
   await clock.advance(7500)
   const out = await p
-  expect(String(out.result)).toContain('completed')
-  expect(String(out.result)).toContain('echo: hi')
+  const { success, message } = out.result as { success: boolean; message: string }
+  expect(success).toBe(true)
+  expect(message).toContain('completed')
+  expect(message).toContain('echo: hi')
   const sent = net.calls.find(c => JSON.parse(c.init?.body ?? '{}').method === 'SendMessage')
   expect(sent?.init?.headers?.Authorization).toBe('Bearer s3cret')
 })
@@ -78,7 +81,7 @@ test('SendMessage to a2a:<alias> is the worker send, task tracking and all', WIT
 test('SendMessage to a2a: with an unknown alias lists the known ones', async ($, on) => {
   mock.store(on, STORE)
   fakeSidecar(on, { configured: false })
-  expect(String((await $.tool.call({ tool: 'SendMessage', to: 'a2a:nope', message: 'hi' })).result)).toContain('Known workers: fake')
+  expect((await $.tool.call({ tool: 'SendMessage', to: 'a2a:nope', message: 'hi' })).result).toEqual({ success: false, message: expect.stringContaining('Known workers: fake') })
 })
 
 test('SendMessage to anyone else is left to the engine', WITH_LAN, async ($, on) => {
@@ -193,7 +196,7 @@ test('where the build has no SendFile, LAN mode offers send_file', WITH_LAN, asy
   const lan = fakeSidecar(on, { cwd: '/w', send: args => ({ ok: true, to: args.to, messageId: 'm-2', files: [{ path: '/w/a.txt', size: 1, sha256: 'f' }] }) })
   expect(await startSession($, on)).toContain('send_file')
   const out = await $.tool.call({ tool: 'mcp__a2a-mod__send_file', to: 'lan:box/proj', files: ['a.txt'] })
-  expect(out.result).toEqual({ success: true, message: 'Sent 1 file to lan:box/proj.', msg_id: 'm-2', files: [{ path: '/w/a.txt', size: 1, sha256: 'f' }] })
+  expect(out.result).toBe('Sent 1 file to lan:box/proj.\n  /w/a.txt (1 bytes, sha256 f)')
   expect(lan.sent()).toEqual([{ to: 'lan:box/proj', text: '', files: ['a.txt'], cwd: '/w' }])
 })
 

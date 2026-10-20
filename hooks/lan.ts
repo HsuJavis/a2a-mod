@@ -35,8 +35,8 @@ export function resultOf(r: McpToolResult): Record<string, any> {
   try { return JSON.parse(text) } catch { throw new LanDown(`the LAN sidecar answered ${plain(text).slice(0, 200) || 'nothing'}`) }
 }
 
-export const isLan = (to: unknown): to is string => typeof to === 'string' && to.startsWith('lan:')
-export const isA2a = (to: unknown): to is string => typeof to === 'string' && to.startsWith('a2a:')
+export const isLan = (to: unknown): boolean => typeof to === 'string' && to.startsWith('lan:')
+export const isA2a = (to: unknown): boolean => typeof to === 'string' && to.startsWith('a2a:')
 
 /** Why LAN mode is off, for Claude: the sidecar's own reason when it gave one. */
 export function offText(status: LanStatus | undefined, down?: string): string {
@@ -136,6 +136,15 @@ export function sendFileResult(to: string, out: Record<string, any>): SendFileOu
   return { success: true, message: `Sent ${sent} file${sent === 1 ? '' : 's'} to ${out.to ?? to}.`, msg_id: String(out.messageId), files }
 }
 
+/** send_file's answer: a registered tool's result is text (the engine refused an object in a live session). */
+export const sendFileText = (r: SendFileOut) =>
+  [r.message, ...r.files.map(f => (f.error ? `  ${f.path}: ${f.error}` : `  ${f.path} (${f.size ?? '?'} bytes, sha256 ${f.sha256 ?? '?'})`))].join('\n')
+
+/** SendMessage's own result shape: the engine refuses an answer that is not an object. */
+export type SentOut = { success: boolean; message: string }
+
 /** The sidecar's send result as SendMessage's answer. */
-export const sentText = (to: string, out: Record<string, any>) =>
-  out.ok === true ? `Delivered to ${out.to ?? to}. Its answer, if any, arrives later as a message from ${out.to ?? to}.` : String(out.error ?? 'a2a lan: the send failed')
+export const sentResult = (to: string, out: Record<string, any>): SentOut =>
+  out.ok === true
+    ? { success: true, message: `Delivered to ${out.to ?? to}. Its answer, if any, arrives later as a message from ${out.to ?? to}.` }
+    : { success: false, message: String(out.error ?? 'a2a lan: the send failed') }
