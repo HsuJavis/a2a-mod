@@ -314,6 +314,7 @@ export function fakeSidecar(on: On, opts: { configured?: boolean; mode?: 'open' 
   on('session.cwd', async () => ({ value: opts.cwd ?? '/work' }))
   const calls: { tool: string; args: Record<string, unknown> }[] = []
   const inbox: unknown[] = []
+  let statics: string[] = []
   const configured = opts.configured ?? true
   on('mcp.connect', async () => ({
     value: opts.down ? { isConnected: false, reason: 'failed', message: opts.down } : { isConnected: true, server: 'plugin:a2a-mod:lan' },
@@ -321,14 +322,15 @@ export function fakeSidecar(on: On, opts: { configured?: boolean; mode?: 'open' 
   on('mcp.call', async (_$, e) => {
     calls.push({ tool: e.tool, args: e.args })
     const out: unknown =
-      e.tool === 'status' ? { configured, mode: configured ? (opts.mode ?? 'secret') : 'off', id: 'self', name: configured ? 'here/proj' : '', address: configured ? 'lan:here/proj' : '', port: configured ? 41400 : 0, peers: 1 }
+      e.tool === 'status' ? { configured, mode: configured ? (opts.mode ?? 'secret') : 'off', id: 'self', name: configured ? 'here/proj' : '', address: configured ? 'lan:here/proj' : '', port: configured ? 41400 : 0, peers: 1, static: statics }
+      : e.tool === 'static' ? { static: (statics = (e.args.hosts as string[]) ?? []) }
       : e.tool === 'peers' ? { peers: opts.peers ?? [PEER] }
       : e.tool === 'inbox' ? { messages: inbox.splice(0) }
       : e.tool === 'send' ? (opts.send?.(e.args) ?? { ok: true, to: e.args.to, messageId: 'm-1', files: [] })
       : { error: `unknown tool ${e.tool}` }
     return { value: { content: [{ type: 'text', text: JSON.stringify(out) }], isError: false, structuredContent: out } }
   })
-  return { calls, inbox, sent: () => calls.filter(c => c.tool === 'send').map(c => c.args) }
+  return { calls, inbox, sent: () => calls.filter(c => c.tool === 'send').map(c => c.args), statics: () => calls.filter(c => c.tool === 'static').map(c => c.args.hosts) }
 }
 
 /** Starts the session, as layout.test.ts does, and answers the tools it registers with their names. */

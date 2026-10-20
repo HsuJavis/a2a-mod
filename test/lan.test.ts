@@ -1,7 +1,7 @@
 import { test, expect, mock, type Engine } from 'claude-code/testing'
-import { OFF_HINT, POLL_LAN_MS } from '../hooks/lan.ts'
+import { OFF_HINT, peersOf, POLL_LAN_MS } from '../hooks/lan.ts'
 import { fixtures as f } from './fixtures.ts'
-import { engineUi, fakeNet, fakeSidecar, LAN_OFF, PANE_PROPS, PEER, promptLog, runA2a, startSession, STORE, WITH_LAN, WITH_TOKEN } from './kit.ts'
+import { engineUi, fakeNet, fakeSidecar, heldStore, LAN_OFF, PANE_PROPS, PEER, promptLog, runA2a, startSession, STORE, WITH_LAN, WITH_TOKEN } from './kit.ts'
 
 const NATIVE = 'Sessions on this machine:\n  main'
 
@@ -157,7 +157,7 @@ test('with LAN mode off nothing polls the sidecar', async ($, on) => {
 test('the model may not call the sidecar’s own tools', WITH_LAN, async ($, on) => {
   mock.store(on)
   fakeSidecar(on)
-  for (const t of ['inbox', 'send', 'peers', 'status']) {
+  for (const t of ['inbox', 'send', 'peers', 'status', 'static']) {
     const verdict = await $.tool.check({ tool: `mcp__plugin_a2a-mod_lan__${t}`, input: {} })
     expect(verdict.decision).toBe('deny')
     expect(verdict.reason).toContain('SendMessage or SendFile with to: "lan:<name>"')
@@ -340,4 +340,80 @@ test('where the build has SendFile, LAN mode registers no send_file of its own',
   on('tool.list', async () => ({ value: [{ name: 'SendFile' }] as never }))
   fakeSidecar(on)
   expect(await startSession($, on)).not.toContain('send_file')
+})
+
+// ---------- 0.6.0: how a peer was found, static peers, troubleshooting ----------
+
+test('/a2a lan says how each peer was found', WITH_LAN, async ($, on) => {
+  mock.store(on)
+  fakeSidecar(on, { peers: [{ ...PEER, via: ['broadcast', 'hello'] }, { ...PEER, address: 'lan:mac/x', name: 'mac/x', host: '192.168.0.131', port: 41400, via: ['static'] }] })
+  const text = (await runA2a($, 'lan')).text ?? ''
+  expect(text).toContain('  lan:box/proj  Claude Code session at 192.168.1.5:40123. Message it with SendMessage to: "lan:box/proj". Found by broadcast, hello.')
+  expect(text).toContain('  lan:mac/x  Claude Code session at 192.168.0.131:41400. Message it with SendMessage to: "lan:mac/x". Found by static.')
+  expect(text).not.toContain('UDP 41399')
+})
+
+test('peersOf keeps only the four ways a peer is found', () => {
+  expect(peersOf([{ ...PEER, via: ['multicast', 'evil\nline', 'static', 7] }])[0]!.via).toEqual(['multicast', 'static'])
+  expect(peersOf([PEER])[0]!.via).toBeUndefined()
+})
+
+test('/a2a lan with no peers says what to check: firewall ports, VPN and multicast, /a2a lan add', async ($, on) => {
+  mock.store(on)
+  fakeSidecar(on, { mode: 'open', peers: [] })
+  const text = (await runA2a($, 'lan')).text ?? ''
+  expect(text).toContain('no other sessions seen yet')
+  expect(text).toContain('UDP 41399')
+  expect(text).toContain('TCP 41400-41499')
+  expect(text).toMatch(/VPN/)
+  expect(text).toMatch(/multicast/)
+  expect(text).toContain('/a2a lan add <ip>')
+})
+
+test('/a2a lan add stores the peer, hands the list to the sidecar, and /a2a lan shows it', async ($, on) => {
+  const held = heldStore(on)
+  const lan = fakeSidecar(on, { mode: 'open' })
+  const text = (await runA2a($, 'lan add 192.168.0.131:41400')).text ?? ''
+  expect(text).toContain('192.168.0.131:41400')
+  expect(held('lanPeers')).toEqual(['192.168.0.131:41400'] as never)
+  await runA2a($, 'lan add mac-mini.local')
+  await runA2a($, 'lan add 192.168.0.131:41400')
+  expect(held('lanPeers')).toEqual(['192.168.0.131:41400', 'mac-mini.local'] as never)
+  expect(lan.statics().at(-1)).toEqual(['192.168.0.131:41400', 'mac-mini.local'])
+  expect((await runA2a($, 'lan')).text ?? '').toContain('Static peers (hello over TCP every few seconds): 192.168.0.131:41400, mac-mini.local')
+})
+
+test('/a2a lan remove <host> drops every entry for that host', async ($, on) => {
+  const held = heldStore(on, { lanPeers: ['192.168.0.131:41400', '192.168.0.131:41401', 'mac-mini.local'] })
+  const lan = fakeSidecar(on, { mode: 'open' })
+  const text = (await runA2a($, 'lan remove 192.168.0.131')).text ?? ''
+  expect(text).toContain('192.168.0.131')
+  expect(held('lanPeers')).toEqual(['mac-mini.local'] as never)
+  expect(lan.statics().at(-1)).toEqual(['mac-mini.local'])
+  expect((await runA2a($, 'lan remove nobody.local')).text ?? '').toContain('not a static peer')
+})
+
+test('/a2a lan add refuses what is not host[:port]', async ($, on) => {
+  const held = heldStore(on)
+  const lan = fakeSidecar(on, { mode: 'open' })
+  for (const bad of ['', 'http://x/', 'a b', '10.0.0.1:99999']) {
+    expect((await runA2a($, `lan add ${bad}`)).text ?? '').toContain('/a2a lan add <host>[:port]')
+  }
+  expect(held('lanPeers')).toBeUndefined()
+  expect(lan.statics()).toEqual([])
+})
+
+test('the stored static peers reach the sidecar when the session starts', async ($, on) => {
+  heldStore(on, { lanPeers: ['10.0.0.7', '10.0.0.8:41402'] })
+  const lan = fakeSidecar(on, { mode: 'open' })
+  await startSession($, on)
+  expect(lan.statics()).toEqual([['10.0.0.7', '10.0.0.8:41402']])
+})
+
+test('USAGE lists /a2a lan add and remove', async ($, on) => {
+  mock.store(on)
+  fakeSidecar(on, { configured: false })
+  const text = (await runA2a($, '')).text ?? ''
+  expect(text).toContain('/a2a lan add <host>[:port]')
+  expect(text).toContain('/a2a lan remove <host>')
 })

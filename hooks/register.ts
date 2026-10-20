@@ -4,7 +4,7 @@ import type { LanPeer, LanView, PaneView, RecentState, RecentTask, SentReply, Wo
 import { A2AError, cancelTask, getTask, send } from './client.ts'
 import { runCommand, USAGE } from './command.ts'
 import { describeOutcome, FULL_MAX, wakeDetail, wakeLine } from './format.ts'
-import { agentSections, EMPTY_LAN, framed, isA2a, isLan, LAN_SERVER, LanDown, messagesOf, modeLine, nextView, offText, peerSection, peersOf, POLL_LAN_MS, resultOf, sendFileResult, sendFileText, sentResult, SIDECAR_DENY, toastText, type LanStatus, type Sidecar } from './lan.ts'
+import { agentSections, EMPTY_LAN, framed, isA2a, isLan, LAN_SERVER, LanDown, messagesOf, modeLine, nextView, NO_PEERS_HINT, offText, peerSection, peersOf, POLL_LAN_MS, resultOf, sendFileResult, sendFileText, sentResult, SIDECAR_DENY, staticPeer, STATIC_USAGE, toastText, type LanStatus, type Sidecar } from './lan.ts'
 import { addWorkerTool, removeWorkerTool, type Confirm } from './manage.ts'
 import { changeRecent, isOpen, isWaiting, noteCall, noteSent, noteState, readRecent, visible } from './recent.ts'
 import { loadWorkers, noteFailure, own, parseTokens, targetOf, workerOr, type Host, type SettingTokens } from './registry.ts'
@@ -314,6 +314,33 @@ async function lanSend($: Engine, args: { to: string; text: string; files?: stri
 let lanTimer: Timer | undefined
 let lanBusy = false
 
+// Static peers live in $.store, so they survive a restart; the sidecar hellos them over TCP every period.
+const STATIC_KEY = 'lanPeers'
+const readStatics = async ($: Engine): Promise<string[]> => {
+  const v = await $.store.get(STATIC_KEY)
+  return Array.isArray(v) ? v.map(String).filter(x => staticPeer(x) === x) : []
+}
+const pushStatics = async ($: Engine, hosts: string[]) => { try { await sidecarOf($)('static', { hosts }) } catch {} }
+
+/** /a2a lan add|remove: the stored list changed and handed to the sidecar. */
+async function lanStatic($: Engine, verb: string, arg: string): Promise<string> {
+  const was = await readStatics($)
+  if (verb === 'add') {
+    const spec = staticPeer(arg)
+    if (!spec) return `a2a lan: ${arg ? `${arg.slice(0, 80)} is not a host or host:port` : 'which host?'}.\n${STATIC_USAGE}`
+    const now = was.includes(spec) ? was : [...was, spec]
+    await $.store.set(STATIC_KEY, now)
+    await pushStatics($, now)
+    return `a2a lan: added ${spec}${spec.includes(':') ? '' : ' (ports 41400-41409)'}. This session hellos it over TCP every few seconds; it shows in /a2a lan once it answers.`
+  }
+  const host = arg.replace(/:\d+$/, '')
+  const now = was.filter(x => x.replace(/:\d+$/, '') !== host)
+  if (!host || now.length === was.length) return `a2a lan: ${host.slice(0, 80) || 'that'} is not a static peer. Static peers: ${was.join(', ') || 'none'}.`
+  await $.store.set(STATIC_KEY, now)
+  await pushStatics($, now)
+  return `a2a lan: removed ${host}.`
+}
+
 // Drains the sidecar's inbox. Each message is a toast and a row in the pane, and together they are one
 // prompt, framed, never asUser: another agent wrote them, not the person.
 async function pollLan($: Engine, address: string): Promise<void> {
@@ -343,6 +370,8 @@ async function startLan($: Engine): Promise<void> {
   lanTimer?.cancel()
   lanTimer = undefined
   if (!address) return
+  const statics = await readStatics($)
+  if (statics.length) await pushStatics($, statics)
   lanTimer = $.clock.every(POLL_LAN_MS, () => void pollLan($, address))
   if (!(await $.tool.list()).some(t => t.name === 'SendFile')) await $.tool.register(SEND_FILE_TOOL)
 }
@@ -370,10 +399,20 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'a2a' }, async ($, e) => {
-    const sub = e.args.trim().split(/\s+/)[0]
+    const [sub, verb, ...rest] = e.args.trim().split(/\s+/)
+    if (sub === 'lan' && (verb === 'add' || verb === 'remove')) return { text: await lanStatic($, verb, rest.join(' ')) }
     if (sub === 'lan') {
       const { status, peers, down } = await lanNow($)
-      return { text: status?.configured ? `${modeLine(status.mode)}\nThis session is ${status.address}, listening on port ${status.port}.\n\n${peerSection(status.address, peers)}` : offText(status, down) }
+      if (!status?.configured) return { text: offText(status, down) }
+      const statics = Array.isArray(status.static) ? status.static.map(String).filter(x => staticPeer(x) === x) : []
+      return { text: [
+        modeLine(status.mode),
+        `This session is ${status.address}, listening on port ${status.port}.`,
+        ...(statics.length ? [`Static peers (hello over TCP every few seconds): ${statics.join(', ')}`] : []),
+        '',
+        peerSection(status.address, peers),
+        ...(peers.length ? [] : ['', NO_PEERS_HINT]),
+      ].join('\n') }
     }
     if (sub) {
       const text = await runCommand(hostOf($, settingTokens, ui), e.args)
@@ -508,7 +547,7 @@ export const register: Register = (on, options) => {
   })
 
   // The sidecar's tools are the mod's own plumbing: the model draining the inbox would lose messages.
-  on('tool.check', { tool: ['mcp__plugin_a2a-mod_lan__status', 'mcp__plugin_a2a-mod_lan__peers', 'mcp__plugin_a2a-mod_lan__inbox', 'mcp__plugin_a2a-mod_lan__send'] },
+  on('tool.check', { tool: ['mcp__plugin_a2a-mod_lan__status', 'mcp__plugin_a2a-mod_lan__peers', 'mcp__plugin_a2a-mod_lan__inbox', 'mcp__plugin_a2a-mod_lan__send', 'mcp__plugin_a2a-mod_lan__static'] },
     (_$, _e, next) => (next.origin.plugin === 'a2a-mod' ? { decision: 'allow' } : { decision: 'deny', reason: SIDECAR_DENY }))
 
   // The listing is the engine's; ours goes after it, and a sidecar that fails costs one line at most.

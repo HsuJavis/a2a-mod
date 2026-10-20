@@ -1,6 +1,6 @@
 {
   "name": "a2a-mod",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "A2A protocol client for Claude Code: Claude hands tasks to non-Claude worker agents over Agent2Agent and picks up their results. LAN mode: Claude Code sessions on the same network find each other and exchange messages and files.",
   "author": {
     "name": "HsuJavis",
@@ -60,6 +60,11 @@
       "type": "string",
       "title": "LAN name",
       "description": "LAN mode: the name other sessions address this one by (lan:<name>). Empty: <hostname>/<folder>."
+    },
+    "lanPeers": {
+      "type": "string",
+      "title": "LAN static peers",
+      "description": "LAN mode: other machines to reach by address, for networks that drop multicast (a firewall, a VPN, a router between wired and Wi-Fi). host[:port] separated by spaces, e.g. \"192.168.0.131 mac-mini.local:41400\". No port: 41400-41409 are tried. /a2a lan add does the same from a session."
     }
   },
   "mcpServers": {
@@ -71,7 +76,8 @@
       "env": {
         "A2A_MOD_LAN": "${user_config.lan}",
         "A2A_MOD_LAN_SECRET": "${user_config.lanSecret}",
-        "A2A_MOD_LAN_NAME": "${user_config.lanName}"
+        "A2A_MOD_LAN_NAME": "${user_config.lanName}",
+        "A2A_MOD_LAN_PEERS": "${user_config.lanPeers}"
       }
     }
   }

@@ -91,7 +91,8 @@ export type PaneView = { open: string[]; replying: string[]; collapsed: string[]
 export type SentReply = { worker: string; taskId: string; text: string }
 
 /** A Claude Code session the LAN sidecar discovered, by the address SendMessage takes (`lan:<name>`). */
-export type LanPeer = { address: string; name: string; host: string; port: number }
+/** `via`: how the sidecar found it (multicast, broadcast, a hello it got, or a static peer it helloed). */
+export type LanPeer = { address: string; name: string; host: string; port: number; via?: string[] }
 
 /** One file a LAN message carried, as the sidecar saved it: `path` and `sha256` once downloaded, `error` when not. */
 export type LanFile = { name: string; path?: string; size?: number; sha256?: string; error?: string }

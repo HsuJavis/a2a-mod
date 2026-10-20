@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-20
+
+### Added
+
+- LAN discovery that does not depend on multicast alone. Each announce also goes to every LAN interface's subnet broadcast address, and every announce carries how it was sent.
+- A TCP hello, `POST /lan/hello` (open mode: no auth; secret mode: the bearer, as on `/a2a`): the body is an announce, checked as one; the receiver registers the sender at the address it connected from and answers with its own announce, so one call teaches both sides.
+- Static peers: `/a2a lan add <host>[:port]` and `/a2a lan remove <host>`, kept in the mod's store, and the `lanPeers` option (space-separated host[:port]). With no port, 41400-41409 are tried. The sidecar hellos them over TCP every announce period, so a peer stays alive when all UDP is dropped. A static peer that answers the hello with 404 (0.5.x) is registered from its agent card, when the card asks for no auth and this session is in open mode; only the card is fetched.
+- The agent card carries `lanA2a` (`id`, `name`, `mode`, and `group` in open mode only: a secret-mode group is a hash of the secret).
+- `/a2a lan` says how each peer was found (multicast, broadcast, hello, static), lists the static peers, and with no peers gives a troubleshooting hint: firewall ports, VPN and multicast, `/a2a lan add <ip>`.
+- `LAN_A2A_NO_MCAST=1` runs the sidecar with no UDP at all (static peers only).
+- The README (English and 繁體中文) has a troubleshooting section: ufw commands, macOS firewall, Local Network permission and VPN notes.
+
 ## [0.5.1] - 2026-10-20
 
 ### Changed

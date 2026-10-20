@@ -36,7 +36,7 @@ export const modeLine = (mode: LanMode | undefined) =>
 /** One sidecar tool call: its structured result. Throws when the sidecar is not there. */
 export type Sidecar = (tool: string, args?: Record<string, unknown>) => Promise<Record<string, any>>
 
-export type LanStatus = { configured: boolean; mode?: LanMode; problem?: string; address: string; name: string; port: number; peers: number }
+export type LanStatus = { configured: boolean; mode?: LanMode; problem?: string; address: string; name: string; port: number; peers: number; static?: string[] }
 
 export class LanDown extends Error {}
 
@@ -61,8 +61,33 @@ const safeAddress = (s: unknown) => String(s ?? '').replace(/[^\p{L}\p{N}._/:#-]
 const safeName = (s: unknown) => String(s ?? '').replace(/[^\p{L}\p{N}._/-]+/gu, '-').slice(0, 64)
 const safeHost = (s: unknown) => String(s ?? '').replace(/[^0-9a-fA-F.:]+/g, '').slice(0, 45)
 
+const VIAS = ['multicast', 'broadcast', 'hello', 'static']
+
 export const peersOf = (raw: unknown): LanPeer[] =>
-  (Array.isArray(raw) ? raw : []).map((p: any) => ({ address: safeAddress(p.address), name: safeName(p.name), host: safeHost(p.host), port: Number(p.port) }))
+  (Array.isArray(raw) ? raw : []).map((p: any) => ({
+    address: safeAddress(p.address), name: safeName(p.name), host: safeHost(p.host), port: Number(p.port),
+    ...(Array.isArray(p.via) ? { via: VIAS.filter(v => p.via.includes(v)) } : {}),
+  }))
+
+/** A static peer as /a2a lan add takes it: host or host:port, a hostname or an IPv4 address. Undefined when it is not one. */
+export function staticPeer(spec: string): string | undefined {
+  const m = /^([A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)(?::(\d{1,5}))?$/.exec(spec.trim())
+  if (!m || (m[2] && (Number(m[2]) < 1 || Number(m[2]) > 65535))) return undefined
+  return m[2] ? `${m[1]}:${Number(m[2])}` : m[1]
+}
+
+export const STATIC_USAGE = 'Usage: /a2a lan add <host>[:port] (no port: 41400-41409 are tried) | /a2a lan remove <host>'
+
+/** /a2a lan's lines when no other session is seen. */
+export const NO_PEERS_HINT = [
+  'Nothing found? Check:',
+  '  - Firewalls on both machines let in UDP 41399 (discovery) and TCP 41400-41499 (messages, hellos), e.g. on Ubuntu:',
+  '      sudo ufw allow from 192.168.0.0/24 to any port 41399 proto udp',
+  '      sudo ufw allow from 192.168.0.0/24 to any port 41400:41499 proto tcp',
+  '  - A VPN (Cloudflare WARP and the like) can take the multicast route, and some routers do not pass multicast between wired and Wi-Fi.',
+  '  - Either way, add the other machine by address; a hello over TCP then finds it, and it finds this session back:',
+  '      /a2a lan add <ip>',
+].join('\n')
 
 const fileOf = (f: any): LanFile => ({
   name: plain(String(f?.name ?? 'file')),
@@ -146,7 +171,7 @@ export function agentSections(lan: { status?: LanStatus; peers: LanPeer[]; down?
 export function peerSection(address: string, peers: LanPeer[]): string {
   return [
     `LAN (discovered, this session is ${address}):`,
-    ...(peers.length ? peers.map(p => `  ${p.address}  Claude Code session at ${p.host}:${p.port}. Message it with SendMessage to: "${p.address}".`) : ['  no other sessions seen yet']),
+    ...(peers.length ? peers.map(p => `  ${p.address}  Claude Code session at ${p.host}:${p.port}. Message it with SendMessage to: "${p.address}".${p.via?.length ? ` Found by ${p.via.join(', ')}.` : ''}`) : ['  no other sessions seen yet']),
   ].join('\n')
 }
 

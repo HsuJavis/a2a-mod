@@ -11,6 +11,8 @@ export const USAGE = [
   '  /a2a list',
   '  /a2a remove <alias>',
   '  /a2a lan    (LAN mode: open, secret or off, this session\'s address and the sessions it sees)',
+  '  /a2a lan add <host>[:port]    (a static LAN peer, helloed over TCP: for networks that drop multicast)',
+  '  /a2a lan remove <host>',
   '',
   'Never type a token here: slash commands are kept in the transcript.',
 ].join('\n')

@@ -104,9 +104,22 @@ Restart Claude Code after a change. `lanName` sets the name others use (default 
 
 - A message in shows as a toast, a row in the `/a2a` pane, and a prompt that starts a turn. It is framed as another agent's words, not yours, and its text cannot close that frame. Files land in `~/.claude/lan-a2a/inbox/` (`LAN_A2A_INBOX` moves it), with their sha256.
 - `/a2a lan` shows the mode, this session's address and the sessions it sees; `/a2a list` and the `workers` tool list them too.
-- How it works: the mod starts a small Node sidecar (`sidecar/lan-a2a.mjs`, no dependencies) per session. It serves an A2A 1.0/0.3 endpoint on the first free TCP port in 41400-41499, or on a random port when all of those are taken (the announce carries the real port, so discovery still works, but a firewall rule for the range will not cover it; `LAN_A2A_PORT` pins a port or range, with no fallback). It announces itself by UDP multicast on `239.255.41.99:41399` (TTL 1, this subnet only) and sends files by URL. A file is served only under an unguessable id for an hour, and a session downloads a file only from the host that sent the message.
+- How it works: the mod starts a small Node sidecar (`sidecar/lan-a2a.mjs`, no dependencies) per session. It serves an A2A 1.0/0.3 endpoint on the first free TCP port in 41400-41499, or on a random port when all of those are taken (the announce carries the real port, so discovery still works, but a firewall rule for the range will not cover it; `LAN_A2A_PORT` pins a port or range, with no fallback). It announces itself out of every IPv4 interface by UDP multicast on `239.255.41.99:41399` (TTL 1, this subnet only) and to each interface's subnet broadcast address on port 41399, hellos its static peers over TCP (`POST /lan/hello`), and sends files by URL. A file is served only under an unguessable id for an hour, and a session downloads a file only from the host that sent the message.
 
 Security: plain HTTP on the LAN, nothing is encrypted, in either mode. In open mode anyone on the network can reach your session; in secret mode anyone with the secret can, and the secret crosses the wire in clear. Claude is told the text is untrusted, but it still reads it, so prefer secret mode, or turn LAN mode off, on networks you do not control. The agent card at `/.well-known/agent-card.json` is public; in secret mode everything else needs the secret. Allow UDP 41399 and TCP 41400-41499 in a host firewall, and note that guest Wi-Fi with client isolation blocks multicast.
+
+### When sessions do not see each other
+
+`/a2a lan` says how each peer was found (`multicast`, `broadcast`, `hello` when it said hello to this session, `static` when this session reached it by address) and, when it sees none, what to check. Multicast and broadcast are UDP and are easily dropped: by a host firewall, by a VPN that takes the multicast route (Cloudflare WARP and the like), or by a router that does not pass multicast between wired and Wi-Fi. Plain TCP usually still works, so:
+
+- **Add the other machine by address.** `/a2a lan add <host>[:port]` (no port: 41400-41409 are tried) stores it and survives restarts; `/a2a lan remove <host>` drops it. Or set the `lanPeers` option, space-separated, for every session: `claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lanPeers":"192.168.0.131"}'`. Every few seconds this session says hello over TCP; the other side registers it from that one call, so adding on one machine is enough for both to see each other (as long as TCP reaches the side that added). A 0.5.x session has no hello; in open mode it is registered from its agent card, but it will not see this one until it is upgraded.
+- **Linux (ufw).** Allow the ports from your subnet:
+  ```
+  sudo ufw allow from 192.168.0.0/24 to any port 41399 proto udp
+  sudo ufw allow from 192.168.0.0/24 to any port 41400:41499 proto tcp
+  ```
+- **macOS.** System Settings → Network → Firewall: allow incoming connections for `node` (or turn off "Block all incoming connections" and stealth mode). Privacy & Security → Local Network: allow the terminal app that runs Claude Code, or multicast is silently dropped. A VPN such as Cloudflare WARP can route multicast into its tunnel: exclude your LAN (WARP: Preferences → Advanced → Split tunnels, or "Local network exclusion"), or rely on `/a2a lan add`.
+- **Check by hand.** `curl http://<ip>:41400/.well-known/agent-card.json` from the other machine shows TCP gets through; if it does, `/a2a lan add <ip>` will work.
 
 ### LAN 模式（繁體中文）
 
@@ -131,9 +144,22 @@ claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lan":true,"lanSecr
 
 - 收到訊息時會跳 toast、在 `/a2a` 面板多一列，並自動開始一個 turn；內容會標示為「另一個 agent 寫的、不是使用者」的不可信輸入，訊息內文無法關閉這個標示框。檔案存到 `~/.claude/lan-a2a/inbox/`（可用 `LAN_A2A_INBOX` 改），附 sha256。
 - `/a2a lan` 顯示目前模式、本 session 的位址與看得到的其他 session；`/a2a list` 和 `workers` 工具也會列出。
-- 運作方式：每個 session 會啟動一個小型 Node sidecar（`sidecar/lan-a2a.mjs`，零相依），在 41400-41499 中第一個空閒的 TCP port 提供 A2A 1.0/0.3 端點；這段全被占用時改用隨機 port（廣播會帶真正的 port，所以仍找得到，但針對該範圍的防火牆規則就涵蓋不到；`LAN_A2A_PORT` 可指定 port 或範圍，指定時不會退回隨機 port）。以 UDP multicast `239.255.41.99:41399`（TTL 1，只限本網段）互相發現，檔案以 URL 傳遞；檔案只以不可猜的 id 提供一小時，接收端也只從傳訊息的那台主機下載。
+- 運作方式（發現方式：每張網卡各送一次 UDP multicast 與子網廣播、對靜態 peer 走 TCP hello `POST /lan/hello`）：每個 session 會啟動一個小型 Node sidecar（`sidecar/lan-a2a.mjs`，零相依），在 41400-41499 中第一個空閒的 TCP port 提供 A2A 1.0/0.3 端點；這段全被占用時改用隨機 port（廣播會帶真正的 port，所以仍找得到，但針對該範圍的防火牆規則就涵蓋不到；`LAN_A2A_PORT` 可指定 port 或範圍，指定時不會退回隨機 port）。以 UDP multicast `239.255.41.99:41399`（TTL 1，只限本網段）互相發現，檔案以 URL 傳遞；檔案只以不可猜的 id 提供一小時，接收端也只從傳訊息的那台主機下載。
 
 安全：區網內走明文 HTTP，兩種模式都沒有加密。open 模式下網路上任何人都能連到你的 session；secret 模式下拿到密鑰的人就能，而且密鑰以明文在網路上傳送。雖然會告訴 Claude 這是不可信內容，它仍會讀到，所以在不是你掌控的網路上，請改用 secret 模式或關閉 LAN 模式。`/.well-known/agent-card.json` 是公開的；secret 模式下其餘都需要密鑰。主機防火牆要放行 UDP 41399 與 TCP 41400-41499；有「用戶端隔離」的訪客 Wi-Fi 會擋掉 multicast。
+
+#### 看不到其他 session 時
+
+`/a2a lan` 會列出每個 peer 是怎麼找到的（`multicast`、`broadcast`、`hello`：對方主動打招呼、`static`：本 session 依位址找到它），一個都沒有時會列出排查提示。multicast 與 broadcast 都是 UDP，很容易被擋：主機防火牆、把 multicast 路由進通道的 VPN（如 Cloudflare WARP）、或不在有線與 Wi-Fi 之間轉送 multicast 的路由器。一般 TCP 通常仍然通，所以：
+
+- **直接用位址加入對方。** `/a2a lan add <主機>[:port]`（不給 port 會試 41400-41409）會存起來、重開後仍在；`/a2a lan remove <主機>` 移除。也可設定 `lanPeers` 選項（空白分隔），對所有 session 生效：`claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lanPeers":"192.168.0.131"}'`。本 session 每隔幾秒用 TCP 打一次招呼，對方從這一次呼叫就會登記本 session，所以只要在一台機器上加，兩邊就互相看得到（前提是加的那一邊的 TCP 連得到對方）。0.5.x 的 session 沒有 hello；open 模式下會改用它的 agent card 登記，但它要升級後才看得到這一邊。
+- **Linux（ufw）**：從你的網段放行這些 port：
+  ```
+  sudo ufw allow from 192.168.0.0/24 to any port 41399 proto udp
+  sudo ufw allow from 192.168.0.0/24 to any port 41400:41499 proto tcp
+  ```
+- **macOS**：系統設定 → 網路 → 防火牆：允許 `node` 接受連入（或關閉「阻擋所有傳入連線」與隱形模式）。隱私權與安全性 → 區域網路：允許執行 Claude Code 的終端機 App，否則 multicast 會被默默丟掉。Cloudflare WARP 之類的 VPN 可能把 multicast 導進通道：把區網排除（WARP：偏好設定 → 進階 → Split tunnels，或「Local network exclusion」），或直接用 `/a2a lan add`。
+- **手動確認**：在另一台機器上 `curl http://<ip>:41400/.well-known/agent-card.json`，有回應代表 TCP 通，`/a2a lan add <ip>` 就會成功。
 
 ## Learn more
 

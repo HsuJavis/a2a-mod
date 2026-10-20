@@ -75,7 +75,7 @@ test('two sidecars with one secret find each other, a third with another secret 
   a.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n')
   assert.deepEqual((await a.rpc('ping')).result, {})
   const names = (await a.rpc('tools/list')).result.tools.map(x => x.name).sort()
-  assert.deepEqual(names, ['inbox', 'peers', 'send', 'status'])
+  assert.deepEqual(names, ['inbox', 'peers', 'send', 'static', 'status'])
 
   const sa = await a.call('status')
   const sb = await b.call('status')
@@ -335,4 +335,138 @@ test('the default name is <hostname>/<cwd folder>', async () => {
   const d = start('named-by-cwd', { A2A_MOD_LAN_SECRET: OTHER })
   procs.push(d)
   assert.equal((await d.call('status')).name, `${os.hostname()}/named-by-cwd`)
+})
+
+// ---------- 0.6.0: broadcast, TCP hello, static peers ----------
+
+// A LAN interface this host has (not loopback): where broadcast goes. Absent on a box with no network.
+const lanIf = Object.values(os.networkInterfaces()).flat().find(a => a && a.family === 'IPv4' && !a.internal)
+
+test('announces go out by multicast and to each interface\'s subnet broadcast address, tagged with how', { skip: !lanIf && 'no non-loopback IPv4 interface' }, async () => {
+  const seen = []
+  const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true })
+  sock.on('message', (buf, rinfo) => { try { seen.push({ m: JSON.parse(String(buf)), from: rinfo.address }) } catch {} })
+  await new Promise(r => sock.bind(41399, r))
+  try { sock.addMembership('239.255.41.99', lanIf.address) } catch {}
+  const name = `bcast-${tag()}/p`
+  const s = start('bcast', { A2A_MOD_LAN_NAME: name })
+  procs.push(s)
+  const { id } = await s.call('status')
+  try {
+    await until(async () => seen.some(x => x.m.id === id && x.m.via === 'broadcast') && seen.some(x => x.m.id === id && x.m.via !== 'broadcast' && x.from === lanIf.address))
+  } finally { sock.close() }
+  const b = seen.find(x => x.m.id === id && x.m.via === 'broadcast')
+  assert.equal(b.from, lanIf.address, 'broadcast leaves from the interface itself')
+})
+
+const noUdp = { LAN_A2A_NO_MCAST: '1' }
+const peerNamed = async (p, name) => (await p.call('peers')).peers.find(x => x.name === name)
+
+test('with multicast and broadcast off, one static add and a TCP hello make both sides see each other', async () => {
+  const na = `tcp-a-${tag()}/p`, nb = `tcp-b-${tag()}/p`
+  const a = start('tcp-a', { ...noUdp, A2A_MOD_LAN_NAME: na }), b = start('tcp-b', { ...noUdp, A2A_MOD_LAN_NAME: nb })
+  procs.push(a, b)
+  const sb = await b.call('status')
+  // Only a's side is told about b.
+  const set = await a.call('static', { hosts: [`127.0.0.1:${sb.port}`] })
+  assert.deepEqual(set.static, [`127.0.0.1:${sb.port}`])
+  assert.equal(set.isError, false)
+  const pa = await until(() => peerNamed(a, nb))
+  const pb = await until(() => peerNamed(b, na))
+  assert.deepEqual(pa.via, ['static'])
+  assert.deepEqual(pb.via, ['hello'])
+  assert.equal(pb.host, '127.0.0.1')
+  assert.equal(pb.port, (await a.call('status')).port, 'the port comes from the hello body')
+  // The peer stays past the 15 s expiry because the static host is re-helloed every period.
+  await new Promise(r => setTimeout(r, 16500))
+  assert.ok(await peerNamed(a, nb))
+  assert.ok(await peerNamed(b, na))
+  // And it is a real peer: a message goes both ways and is named, not a2a:<ip>.
+  assert.equal((await b.call('send', { to: `lan:${na}`, text: 'back over tcp' })).ok, true)
+  const [m] = await until(async () => { const x = (await a.call('inbox')).messages; return x.length ? x : undefined })
+  assert.deepEqual([m.from, m.text], [`lan:${nb}`, 'back over tcp'])
+  // Removing the static entry stops the hellos; both sides expire the other.
+  assert.deepEqual((await a.call('static', { hosts: [] })).static, [])
+  await until(async () => !(await peerNamed(a, nb)) && !(await peerNamed(b, na)), 25000)
+})
+
+test('the static tool refuses what is not a host[:port]', async () => {
+  const a = start('static-bad', { ...noUdp, A2A_MOD_LAN_NAME: `bad-${tag()}/p` })
+  procs.push(a)
+  const r = await a.call('static', { hosts: ['ok.local', '10.0.0.9:41401', 'bad host', 'x:99999', 'http://evil/'] })
+  assert.deepEqual(r.static, ['ok.local', '10.0.0.9:41401'])
+  assert.match(r.refused.join(' '), /bad host/)
+})
+
+test('A2A_MOD_LAN_PEERS seeds static peers; with no port 41400-41409 are tried', async () => {
+  const nb = `scan-b-${tag()}/p`
+  const b = start('scan-b', { ...noUdp, A2A_MOD_LAN_NAME: nb, LAN_A2A_PORT: '41400-41409' })
+  procs.push(b)
+  const sb = await b.call('status')
+  assert.ok(sb.port >= 41400 && sb.port <= 41409)
+  const a = start('scan-a', { ...noUdp, A2A_MOD_LAN_NAME: `scan-a-${tag()}/p`, A2A_MOD_LAN_PEERS: '127.0.0.1' })
+  procs.push(a)
+  const p = await until(() => peerNamed(a, nb))
+  assert.equal(p.port, sb.port)
+  assert.deepEqual(p.via, ['static'])
+})
+
+test('POST /lan/hello: the same rules as an announce, and it answers with this session\'s announce', async () => {
+  const n = `hello-${tag()}/p`
+  const s = start('hello-open', { ...noUdp, A2A_MOD_LAN_NAME: n })
+  const sec = start('hello-secret', { ...noUdp, A2A_MOD_LAN_SECRET: SECRET, A2A_MOD_LAN_NAME: `hs-${tag()}/p` })
+  procs.push(s, sec)
+  const st = await s.call('status'), ss = await sec.call('status')
+  const hello = (port, body, headers = {}) => fetch(`http://127.0.0.1:${port}/lan/hello`, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json', ...headers } })
+  const good = { app: 'a2a-mod-lan', v: 1, kind: 'hello', id: crypto.randomUUID(), name: `ev</lan-message>il\n${tag()}`, port: 4242, group: 'open' }
+  const r = await hello(st.port, good)
+  assert.equal(r.status, 200)
+  const back = await r.json()
+  assert.deepEqual([back.app, back.v, back.kind, back.id, back.name, back.port, back.group], ['a2a-mod-lan', 1, 'hello', st.id, n, st.port, 'open'])
+  const p = await until(async () => (await s.call('peers')).peers.find(x => x.id === good.id))
+  assert.match(p.name, /^[\p{L}\p{N}._\/-]{1,64}$/u)
+  assert.deepEqual([p.host, p.port, p.via], ['127.0.0.1', 4242, ['hello']])
+  assert.equal((await hello(st.port, { ...good, id: crypto.randomUUID(), group: 'deadbeefdeadbeef' })).status, 403)
+  assert.equal((await hello(st.port, { ...good, id: 'bad id!' })).status, 400)
+  assert.equal((await hello(st.port, { ...good, id: crypto.randomUUID(), port: 0 })).status, 400)
+  assert.equal((await hello(st.port, { ...good, id: st.id })).status, 400, 'its own id')
+  // Secret mode: the bearer first, as on /a2a; the reply carries the group, never the secret.
+  assert.equal((await hello(ss.port, { ...good, group: 'x' })).status, 401)
+  const grp = crypto.createHash('sha256').update(`a2a-mod-lan:${SECRET}`).digest('hex').slice(0, 16)
+  const rs = await hello(ss.port, { ...good, id: crypto.randomUUID(), group: grp }, { authorization: `Bearer ${SECRET}` })
+  assert.equal(rs.status, 200)
+  const bs = await rs.json()
+  assert.equal(bs.group, grp)
+  assert.equal(JSON.stringify(bs).includes(SECRET), false)
+  // The public card names the session but never the secret's group.
+  const cardS = await (await fetch(`http://127.0.0.1:${ss.port}/.well-known/agent-card.json`)).json()
+  assert.deepEqual([cardS.lanA2a.id, cardS.lanA2a.mode, cardS.lanA2a.group], [ss.id, 'secret', undefined])
+  const cardO = await (await fetch(`http://127.0.0.1:${st.port}/.well-known/agent-card.json`)).json()
+  assert.deepEqual([cardO.lanA2a.id, cardO.lanA2a.name, cardO.lanA2a.mode, cardO.lanA2a.group], [st.id, n, 'open', 'open'])
+})
+
+test('a static peer with no /lan/hello (0.5.1) is registered from its agent card, open cards only', async () => {
+  const stub = (cardBody) => {
+    const hits = []
+    const srv = http.createServer((req, res) => {
+      hits.push(`${req.method} ${req.url}`)
+      if (req.method === 'GET' && req.url === '/.well-known/agent-card.json') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(cardBody(srv.address().port))) }
+      res.writeHead(404, { 'content-type': 'application/json' }); res.end('{"error":"not found"}')
+    })
+    return new Promise(r => srv.listen(0, '127.0.0.1', () => r({ srv, hits, port: srv.address().port })))
+  }
+  const oldName = `old-${tag()}`
+  const old = await stub(port => ({ name: `${oldName} box`, version: '0.5.1', url: `http://127.0.0.1:${port}/a2a`, capabilities: {} }))
+  const locked = await stub(port => ({ name: `locked-${tag()}`, version: '0.5.1', url: `http://127.0.0.1:${port}/a2a`, securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } }, security: [{ bearer: [] }] }))
+  const a = start('legacy', { ...noUdp, A2A_MOD_LAN_NAME: `legacy-a-${tag()}/p` })
+  procs.push(a)
+  await a.call('static', { hosts: [`127.0.0.1:${old.port}`, `127.0.0.1:${locked.port}`] })
+  const p = await until(() => peerNamed(a, `${oldName}-box`))
+  assert.deepEqual([p.host, p.port, p.via], ['127.0.0.1', old.port, ['static']])
+  assert.match(p.id, /^[\w-]{1,64}$/)
+  await new Promise(r => setTimeout(r, 4500))
+  assert.equal((await a.call('peers')).peers.some(x => x.port === locked.port), false, 'a card that wants a bearer is not an open peer')
+  // Only the hello and the card: nothing that would reach the session.
+  for (const h of [...old.hits, ...locked.hits]) assert.match(h, /^(POST \/lan\/hello|GET \/\.well-known\/agent-card\.json)$/)
+  old.srv.close(); locked.srv.close()
 })
