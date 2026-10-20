@@ -108,6 +108,19 @@ Restart Claude Code after a change. `lanName` sets the name others use (default 
 
 Security: plain HTTP on the LAN, nothing is encrypted, in either mode. In open mode anyone on the network can reach your session; in secret mode anyone with the secret can, and the secret crosses the wire in clear. Claude is told the text is untrusted, but it still reads it, so prefer secret mode, or turn LAN mode off, on networks you do not control. The agent card at `/.well-known/agent-card.json` is public; in secret mode everything else needs the secret. Allow UDP 41399 and TCP 41400-41499 in a host firewall, and note that guest Wi-Fi with client isolation blocks multicast.
 
+### Ports
+
+| Port | Protocol | What | Fixed? |
+| --- | --- | --- | --- |
+| 41399 | UDP | discovery (multicast + subnet broadcast) | always, every session |
+| 41400 | TCP | messages and files of the first session on a host | yes, while it is free |
+| 41401-41499 | TCP | the 2nd, 3rd, … session on the same host, in start order | the next free one |
+| random | TCP | only when all of 41400-41499 are taken | no; `LAN_A2A_PORT` prevents it |
+
+One session per machine means TCP 41400. Open the whole range once (UDP 41399, TCP 41400-41499) and more sessions need no new rule. `LAN_A2A_PORT=41400` or `LAN_A2A_PORT=41400-41410` pins the port or range; with it set there is no random fallback, and a session that finds no free port there starts without LAN mode.
+
+A message that goes A → B but times out B → A means A reaches B's TCP port but B cannot reach A's: the firewall on A blocks incoming TCP. Seeing a peer in `ListAgents` only proves its UDP announce got through, not that its TCP port is open.
+
 ### When sessions do not see each other
 
 `/a2a lan` says how each peer was found (`multicast`, `broadcast`, `hello` when it said hello to this session, `static` when this session reached it by address) and, when it sees none, what to check. Multicast and broadcast are UDP and are easily dropped: by a host firewall, by a VPN that takes the multicast route (Cloudflare WARP and the like), or by a router that does not pass multicast between wired and Wi-Fi. Plain TCP usually still works, so:
@@ -147,6 +160,19 @@ claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lan":true,"lanSecr
 - 運作方式（發現方式：每張網卡各送一次 UDP multicast 與子網廣播、對靜態 peer 走 TCP hello `POST /lan/hello`）：每個 session 會啟動一個小型 Node sidecar（`sidecar/lan-a2a.mjs`，零相依），在 41400-41499 中第一個空閒的 TCP port 提供 A2A 1.0/0.3 端點；這段全被占用時改用隨機 port（廣播會帶真正的 port，所以仍找得到，但針對該範圍的防火牆規則就涵蓋不到；`LAN_A2A_PORT` 可指定 port 或範圍，指定時不會退回隨機 port）。以 UDP multicast `239.255.41.99:41399`（TTL 1，只限本網段）互相發現，檔案以 URL 傳遞；檔案只以不可猜的 id 提供一小時，接收端也只從傳訊息的那台主機下載。
 
 安全：區網內走明文 HTTP，兩種模式都沒有加密。open 模式下網路上任何人都能連到你的 session；secret 模式下拿到密鑰的人就能，而且密鑰以明文在網路上傳送。雖然會告訴 Claude 這是不可信內容，它仍會讀到，所以在不是你掌控的網路上，請改用 secret 模式或關閉 LAN 模式。`/.well-known/agent-card.json` 是公開的；secret 模式下其餘都需要密鑰。主機防火牆要放行 UDP 41399 與 TCP 41400-41499；有「用戶端隔離」的訪客 Wi-Fi 會擋掉 multicast。
+
+#### Port 說明
+
+| Port | 協定 | 用途 | 固定嗎 |
+| --- | --- | --- | --- |
+| 41399 | UDP | 互相發現（multicast + 子網廣播） | 永遠固定，每個 session 都一樣 |
+| 41400 | TCP | 這台機器第一個 session 的訊息與檔案 | 沒被占用就固定是它 |
+| 41401-41499 | TCP | 同一台機器的第 2、3…個 session，依啟動順序 | 取下一個空閒的 |
+| 隨機 | TCP | 只有 41400-41499 全被占用時 | 不固定；設 `LAN_A2A_PORT` 可避免 |
+
+每台只開一個 session 就是 TCP 41400。防火牆一次放行整段（UDP 41399、TCP 41400-41499），之後多開 session 也不用再加規則。設 `LAN_A2A_PORT=41400` 或 `LAN_A2A_PORT=41400-41410` 可以固定 port 或範圍；設了就不會退到隨機 port，範圍內都被占用時，該 session 的 LAN 模式不會啟動。
+
+A → B 送得到、B → A 卻逾時：代表 A 連得到 B 的 TCP port，B 連不到 A 的，也就是 A 的防火牆擋了 TCP 連入。在 `ListAgents` 看得到對方，只證明它的 UDP 廣播到得了，不代表它的 TCP port 有開。
 
 #### 看不到其他 session 時
 
