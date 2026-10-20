@@ -335,7 +335,7 @@ async function lanStatic($: Engine, verb: string, arg: string): Promise<string> 
   }
   const host = arg.replace(/:\d+$/, '')
   const now = was.filter(x => x.replace(/:\d+$/, '') !== host)
-  if (!host || now.length === was.length) return `a2a lan: ${host.slice(0, 80) || 'that'} is not a static peer. Static peers: ${was.join(', ') || 'none'}.`
+  if (!host || now.length === was.length) return `a2a lan: ${host.slice(0, 80) || 'that'} is not a static peer added with /a2a lan add (those: ${was.join(', ') || 'none'}). Peers from the lanPeers option change with claude plugin configure.`
   await $.store.set(STATIC_KEY, now)
   await pushStatics($, now)
   return `a2a lan: removed ${host}.`
