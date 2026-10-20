@@ -296,3 +296,45 @@ export const has =(tree: unknown, type: string): boolean => {
   const n = tree as Node
   return !!n && typeof n === 'object' && (n.type === type || (n.children ?? []).some(c => has(c, type)))
 }
+
+/** The LAN sidecar's peer, as its peers tool lists one. */
+export const PEER = { address: 'lan:box/proj', name: 'box/proj', id: 'b0b0-1', host: '192.168.1.5', port: 40123, lastSeen: 0 }
+
+/** The plugin's userConfig with LAN mode on; the secret itself reaches only the sidecar's env. */
+export const WITH_LAN = { options: { tokens: 'fake=s3cret', lanSecret: 'lan-secret-1' } }
+
+/**
+ * Stands for sidecar/lan-a2a.mjs beneath $.mcp: `configured` false is a sidecar with no secret, `down`
+ * one that could not be connected. Push onto `inbox` what the next poll drains. The session started
+ * before the test's hooks were there, so LAN mode starts with `startSession`.
+ */
+export function fakeSidecar(on: On, opts: { configured?: boolean; down?: string; peers?: unknown[]; cwd?: string; send?: (args: Record<string, unknown>) => unknown } = {}) {
+  on('session.cwd', async () => ({ value: opts.cwd ?? '/work' }))
+  const calls: { tool: string; args: Record<string, unknown> }[] = []
+  const inbox: unknown[] = []
+  const configured = opts.configured ?? true
+  on('mcp.connect', async () => ({
+    value: opts.down ? { isConnected: false, reason: 'failed', message: opts.down } : { isConnected: true, server: 'plugin:a2a-mod:lan' },
+  }))
+  on('mcp.call', async (_$, e) => {
+    calls.push({ tool: e.tool, args: e.args })
+    const out: unknown =
+      e.tool === 'status' ? { configured, id: 'self', name: configured ? 'here/proj' : '', address: configured ? 'lan:here/proj' : '', port: configured ? 41400 : 0, peers: 1 }
+      : e.tool === 'peers' ? { peers: opts.peers ?? [PEER] }
+      : e.tool === 'inbox' ? { messages: inbox.splice(0) }
+      : e.tool === 'send' ? (opts.send?.(e.args) ?? { ok: true, to: e.args.to, messageId: 'm-1', files: [] })
+      : { error: `unknown tool ${e.tool}` }
+    return { value: { content: [{ type: 'text', text: JSON.stringify(out) }], isError: false, structuredContent: out } }
+  })
+  return { calls, inbox, sent: () => calls.filter(c => c.tool === 'send').map(c => c.args) }
+}
+
+/** Starts the session, as layout.test.ts does, and answers the tools it registers with their names. */
+export async function startSession($: Engine, on: On): Promise<string[]> {
+  const tools: string[] = []
+  on('tool.register', async (_$, e) => { tools.push(e.name); return { value: { tool: e.name } } })
+  on('command.register', async (_$, e) => ({ value: { command: e.name } }))
+  on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  return tools
+}

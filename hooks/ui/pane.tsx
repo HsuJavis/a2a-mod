@@ -1,5 +1,5 @@
 import type { ElementTable, RenderElement, RenderSurface, UiPressArgument } from 'claude-code'
-import type { PaneView, RecentState, RecentTask, Worker } from '../../types/index.d.ts'
+import type { LanView, PaneView, RecentState, RecentTask, Worker } from '../../types/index.d.ts'
 import { isOpen, isRunning, isWaiting } from '../recent.ts'
 import { own } from '../registry.ts'
 import type { Palette } from './color.ts'
@@ -39,6 +39,8 @@ export type PaneData = {
   durations: Record<string, number[]>
   view: PaneView
   drafts: ReadonlyMap<string, string>
+  /** LAN mode's sessions and messages; absent while LAN mode is off. */
+  lan?: LanView
 }
 
 export type PaneActions = {
@@ -225,6 +227,27 @@ function agentTree(el: PaneEls, groups: [string, Worker | undefined][], d: PaneD
   )
 }
 
+/** Messages listed in the LAN box, newest last. */
+export const LAN_RECEIVED = 3
+
+/** The discovered LAN sessions and the last messages they sent: found, not added, so no add hint or buttons. */
+function lanBox(el: PaneEls, lan: LanView, pal: Palette, width: number): RenderElement {
+  const { Box, Text } = el
+  const head = split(el, [{ text: '▾ ', color: 'inactive' }, ...gradient('LAN', 0, pal)], 'discovered', width)
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="inactive" paddingX={1}>
+      {head}
+      <Text color="inactive">{fit(`you: ${lan.address}`, width)}</Text>
+      {lan.peers.length
+        ? lan.peers.map(p => <Text>{fit(`◇ ${p.address}`, width)}</Text>)
+        : <Text color="inactive">{fit('no other sessions yet', width)}</Text>}
+      {lan.received.slice(-LAN_RECEIVED).map(m => (
+        <Text color="inactive">{fit(`← ${m.from}: ${m.text.replace(/\s+/g, ' ') || `${m.files.length} file(s)`}`, width)}</Text>
+      ))}
+    </Box>
+  )
+}
+
 /**
  * The slim pane, drawn to the body's own width and height: a title and summary, the agent tree, one
  * rounded box per worker, and a footer pushed to the bottom. Borders and the tree are static elements
@@ -236,7 +259,7 @@ export function paneTree(el: PaneEls, d: PaneData, act: PaneActions): RenderElem
   // Inside the worker box: the border and a column of padding on each side.
   const content = Math.max(1, inner - 4)
   const frame = { width: d.width, minHeight: d.height, paddingX: 1, paddingTop: 1 } as const
-  if (!d.workers.length && !d.rows.length) {
+  if (!d.workers.length && !d.rows.length && !d.lan) {
     return (
       <Box flexDirection="column" alignItems="center" justifyContent="center" flexGrow={1} {...frame}>
         <Text color="inactive">{fit('Claude ┄┄ ·', inner)}</Text>
@@ -266,6 +289,7 @@ export function paneTree(el: PaneEls, d: PaneData, act: PaneActions): RenderElem
       {agentTree(el, groups, d, act, inner)}
       <Box flexDirection="column" rowGap={1} marginTop={1}>
         {groups.map(([alias, w]) => workerBox(el, alias, w, d.rows.filter(t => t.worker === alias), d, act, content))}
+        {d.lan ? lanBox(el, d.lan, d.pal, content) : null}
       </Box>
       <Box flexGrow={1} />
       {rule}
