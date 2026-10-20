@@ -33,6 +33,20 @@ In Claude Code 2.1.287 or later:
 
 Upstream, without LAN mode: `/plugin marketplace add NovusEdge/a2a-mod`.
 
+### The settings the installer asks for
+
+All of them can stay empty or at their default: LAN mode then runs in open mode, named `<hostname>/<folder>`. Change them later with `/plugin` (pick a2a-mod, then configure) or `claude plugin configure a2a-mod@a2a-mod`, and restart Claude Code.
+
+| Setting | What it is | What to put | Default |
+| --- | --- | --- | --- |
+| **A2A layout** (`layout`) | How much a2a UI shows: `full` cards above the prompt, the band and the workers pane; `pane` the pane only; `minimal` the status line only | Leave it, or `minimal` for a quiet screen | `full` |
+| **A2A animations** (`animations`) | Spinners and shimmer in that UI; off draws still frames | Leave it | on |
+| **Worker tokens** (`tokens`) | Bearer tokens for remote A2A workers you add with `/a2a add`, as `alias=token` pairs separated by spaces (`w1=abc w2=def`). Not used by LAN mode | Empty, unless a worker you added needs a token | empty |
+| **LAN mode** (`lan`) | Whether this session joins the LAN: finds other Claude Code sessions, lets them message it and send it files. Off opens no socket | On to use LAN mode | on |
+| **LAN shared secret** (`lanSecret`) | Empty: open mode, anyone on the LAN can reach this session. 8+ characters: secret mode, only sessions with the same secret see each other; set the same value on every machine. 1-7 characters is refused | Empty on a home network you trust; a long random string otherwise | empty |
+| **LAN name** (`lanName`) | The name others use to reach this session: they see `lan:<name>` and send to it. Letters, digits and `. _ / -`, 64 at most | A short name per machine, e.g. `macJavis`; with several sessions on one machine, a name per session or leave it empty | `<hostname>/<folder>` |
+| **LAN static peers** (`lanPeers`) | Other machines to reach by IP when they do not show up by themselves (a firewall, a VPN or a router dropping multicast), `host[:port]` separated by spaces | Empty at first; if a machine stays invisible, its IP, e.g. `192.168.0.131`. Setting it on one side is enough. `/a2a lan add <ip>` does the same from a session | empty |
+
 ## Try it in a minute
 
 You don't need a real agent. The repo ships a fake worker (needs Node 24 and pnpm).
@@ -137,6 +151,20 @@ A message that goes A → B but times out B → A means A reaches B's TCP port b
 ### LAN 模式（繁體中文）
 
 同一個區網裡、裝了這個 mod 且使用相同 LAN 模式的每個 Claude Code session，都會出現在內建的 `ListAgents` 工具裡，名稱是 `lan:<主機>/<資料夾>`，和本機的 session、你登記的 A2A worker（`a2a:<alias>`）並列。Claude 用內建的 `SendMessage`（`to: "lan:<名稱>"`，worker 則是 `"a2a:<alias>"`）傳訊息，用 `SendFile` 傳檔案；這個版本的 Claude Code 沒有 `SendFile` 時，mod 會改提供 `send_file` 工具。你自己執行內建的 `/list-agents` 指令（別名 `/peers`）時，同樣的 LAN agent 也會列在內建清單後面。
+
+#### 安裝時要填的設定
+
+全部留空或維持預設就能用：LAN 模式以 open 模式執行，名稱是 `<主機名>/<資料夾>`。之後要改，用 `/plugin`（選 a2a-mod → configure）或 `claude plugin configure a2a-mod@a2a-mod`，改完重開 Claude Code。
+
+| 設定 | 代表什麼 | 建議填法 | 預設 |
+| --- | --- | --- | --- |
+| **A2A layout**（`layout`） | a2a 介面顯示多少：`full` 輸入框上方的卡片、狀態列與 worker 面板全開；`pane` 只有面板；`minimal` 只有狀態列 | 不用動；想畫面安靜就選 `minimal` | `full` |
+| **A2A animations**（`animations`） | 介面上的轉圈、閃光動畫；關掉改成靜態畫面 | 不用動 | 開 |
+| **Worker tokens**（`tokens`） | 用 `/a2a add` 加入的遠端 A2A worker 的 Bearer token，格式 `別名=token`，多組用空白隔開（`w1=abc w2=def`）。**跟 LAN 模式無關** | 留空；除非你加的 worker 需要 token | 空 |
+| **LAN mode**（`lan`） | 這個 session 要不要加入區網：找到其他 Claude Code session、讓它們傳訊息和檔案給你。關閉就完全不開任何 port | 要用區網功能就開 | 開 |
+| **LAN shared secret**（`lanSecret`） | 留空 = open 模式，區網上任何人都能連到這個 session。填 8 個字元以上 = secret 模式，只有填同一組密鑰的 session 互相看得到，**每台都要填一樣的**。1–7 個字元會被拒絕 | 自己家裡、信任的網路就留空；其他網路填一串長的隨機字串 | 空 |
+| **LAN name**（`lanName`） | 別人用來找你的名字：對方看到 `lan:<名字>`，也用它傳訊息給你。只能用字母、數字與 `. _ / -`，最多 64 字元 | 每台取一個短名字，例如 `macJavis`、`ubuntuJavis`；同一台開多個 session 時，留空（自動用資料夾區分）或各自取名 | `<主機名>/<資料夾>` |
+| **LAN static peers**（`lanPeers`） | 對方機器「自己找不到」時，直接用 IP 指定（防火牆、VPN、路由器擋掉 multicast 時用），格式 `主機[:port]`，多個用空白隔開 | 一開始留空；某台一直看不到，就填它的 IP，例如 `192.168.0.131`。只要一邊填就好。在 session 裡打 `/a2a lan add <ip>` 效果相同 | 空 |
 
 LAN 模式**預設開啟，且為公開（open）模式**：不需密鑰、不需設定。共有三種模式，`/a2a lan` 會顯示目前是哪一種：
 
