@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-20
+
+### Changed
+
+- The frame around an inbound LAN message (open and secret mode alike) now lets Claude reply to the sender with SendMessage to its `lan:` address without asking the user, so a conversation runs in real time. Running commands, editing or creating files, reading or sending local files (SendFile, send_file) and contacting any other peer because a message asks still need the user's confirmation. Before, open mode told Claude to ask the user first even for a reply.
+
 ## [0.5.0] - 2026-10-20
 
 ### Added
