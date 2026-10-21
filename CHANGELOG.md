@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-21
+
+### Added
+
+- `SendFile` to `a2a:<alias>` sends the files, with the optional message, to that registered worker through the worker send (band, pane, status line and wake as for `SendMessage`). The files go inline as A2A file parts with their bytes in base64: 1.0 `{ raw, filename, mediaType }`, 0.3 `{ kind: "file", file: { bytes, name, mimeType } }`, per the worker's version; the worker must accept file parts. At most 4 MiB a file and 10 MiB a send; a file that is missing, too big or past the total is a per-file error in the result and the rest are still sent, each sent file with its size and sha256. Where the build has no `SendFile`, a `send_file` tool does the same for `a2a:` workers. Every other recipient is left to Claude Code.
+
+### Changed
+
+- The built-in `/list-agents` (alias `/peers`) shows the registered A2A workers after its own output, in the words `ListAgents` uses. With no workers, or when they cannot be read, it is the built-in's own.
+- `ListAgents` names `SendFile` beside `SendMessage` for the `a2a:<alias>` workers.
+
+### Removed
+
+- LAN mode: the per-session sidecar (`sidecar/lan-a2a.mjs` and the `mcpServers` entry), the `lan`, `lanSecret`, `lanName` and `lanPeers` options, `lan:<name>` addresses in `ListAgents`, `SendMessage` and `SendFile`, inbound LAN messages, `/a2a lan` (and `add`/`remove`), the LAN box in the pane and the LAN lines in the `workers` tool and `/a2a list`. For Claude Code sessions on other machines, use Claude Code's built-in Remote Control. The registered workers stay in `ListAgents` and `SendMessage` as `a2a:<alias>`.
+
 ## [0.6.1] - 2026-10-20
 
 ### Added

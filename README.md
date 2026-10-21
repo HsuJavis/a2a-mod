@@ -14,7 +14,7 @@
 
 </div>
 
-> **This is HsuJavis's fork of [NovusEdge/a2a-mod](https://github.com/NovusEdge/a2a-mod)** by Aliasgar Khimani (MIT). It adds a [LAN mode](#lan-mode), on by default with no secret: Claude Code sessions on the same network find each other and exchange messages and files. Everything else is upstream's.
+> **This is HsuJavis's fork of [NovusEdge/a2a-mod](https://github.com/NovusEdge/a2a-mod)** by Aliasgar Khimani (MIT). It puts your registered workers into Claude Code's own agent tools: [`ListAgents`, `SendMessage`, `SendFile` and `/list-agents`](#workers-in-claude-codes-agent-tools) show and reach them as `a2a:<alias>`. Everything else is upstream's. The LAN mode of 0.4.0-0.6.1 was removed in 0.7.0: for Claude Code sessions on other machines, use Claude Code's built-in Remote Control.
 
 ## Why
 
@@ -31,21 +31,17 @@ In Claude Code 2.1.287 or later:
 /plugin install a2a-mod@a2a-mod
 ```
 
-Upstream, without LAN mode: `/plugin marketplace add NovusEdge/a2a-mod`.
+Upstream, without the agent-tool integration: `/plugin marketplace add NovusEdge/a2a-mod`.
 
 ### The settings the installer asks for
 
-All of them can stay empty or at their default: LAN mode then runs in open mode, named `<hostname>/<folder>`. Change them later with `/plugin` (pick a2a-mod, then configure) or `claude plugin configure a2a-mod@a2a-mod`, and restart Claude Code.
+All of them can stay empty or at their default. Change them later with `/plugin` (pick a2a-mod, then configure) or `claude plugin configure a2a-mod@a2a-mod`, and restart Claude Code.
 
 | Setting | What it is | What to put | Default |
 | --- | --- | --- | --- |
 | **A2A layout** (`layout`) | How much a2a UI shows: `full` cards above the prompt, the band and the workers pane; `pane` the pane only; `minimal` the status line only | Leave it, or `minimal` for a quiet screen | `full` |
 | **A2A animations** (`animations`) | Spinners and shimmer in that UI; off draws still frames | Leave it | on |
-| **Worker tokens** (`tokens`) | Bearer tokens for remote A2A workers you add with `/a2a add`, as `alias=token` pairs separated by spaces (`w1=abc w2=def`). Not used by LAN mode | Empty, unless a worker you added needs a token | empty |
-| **LAN mode** (`lan`) | Whether this session joins the LAN: finds other Claude Code sessions, lets them message it and send it files. Off opens no socket | On to use LAN mode | on |
-| **LAN shared secret** (`lanSecret`) | Empty: open mode, anyone on the LAN can reach this session. 8+ characters: secret mode, only sessions with the same secret see each other; set the same value on every machine. 1-7 characters is refused | Empty on a home network you trust; a long random string otherwise | empty |
-| **LAN name** (`lanName`) | The name others use to reach this session: they see `lan:<name>` and send to it. Letters, digits and `. _ / -`, 64 at most | A short name per machine, e.g. `macJavis`; with several sessions on one machine, a name per session or leave it empty | `<hostname>/<folder>` |
-| **LAN static peers** (`lanPeers`) | Other machines to reach by IP when they do not show up by themselves (a firewall, a VPN or a router dropping multicast), `host[:port]` separated by spaces | Empty at first; if a machine stays invisible, its IP, e.g. `192.168.0.131`. Setting it on one side is enough. `/a2a lan add <ip>` does the same from a session | empty |
+| **Worker tokens** (`tokens`) | Bearer tokens for remote A2A workers you add with `/a2a add`, as `alias=token` pairs separated by spaces (`w1=abc w2=def`) | Empty, unless a worker you added needs a token | empty |
 
 ## Try it in a minute
 
@@ -95,125 +91,45 @@ Pick `full`, `pane` or `minimal` in `/config` to show more or less. [The UI](htt
 
 The token is read from a command, a file or a setting, and never typed into Claude. [Worker tokens](https://a2a.khimani.dev/tokens) covers all three. You can also just ask Claude to add a worker; it shows a dialog, and nothing is added until you approve it.
 
-## LAN mode
+## Workers in Claude Code's agent tools
 
-Every Claude Code session on the network that runs this mod in the same LAN mode shows up in the built-in `ListAgents` tool as `lan:<host>/<folder>`, next to the sessions on this machine and the A2A workers you registered (`a2a:<alias>`). Claude talks to them with the built-in `SendMessage` (`to: "lan:<name>"`, or `"a2a:<alias>"` for a worker) and sends files with `SendFile`; where the build has no `SendFile`, the mod adds a `send_file` tool. You see the same LAN agents at the end of the built-in `/list-agents` command (alias `/peers`), after the engine's own list.
+The workers you registered with `/a2a add` show up in Claude Code's own agent tools as `a2a:<alias>`, next to the sessions those tools already list:
 
-LAN mode is **on by default, in open mode**: no secret, no setup. It has three modes, and `/a2a lan` says which one runs:
+- **`ListAgents`** lists them after the engine's own listing, under `A2A workers`.
+- **`SendMessage`** with `to: "a2a:<alias>"` sends the message to that worker the way the `send` tool does: the band, the pane, the status line, and the wake when a slow task finishes.
+- **`SendFile`** with `to: "a2a:<alias>"` sends the files, with the optional message, to that worker. Where the build has no `SendFile`, the mod adds a `send_file` tool that does the same.
+- **`/list-agents`** (alias `/peers`), which you type yourself, shows the same workers after the built-in's own list. With no workers it is the built-in's output, unchanged.
 
-- **open** (the default: `lan` on, `lanSecret` empty). Sessions find each other with nothing to configure. There is no authentication: **anyone on your LAN can message your session and drop files in its inbox**, under any name they like. Claude is told each message comes from an unauthenticated host (with its IP), that the content is untrusted, and that it must not run commands, edit files or send files on its say-so without asking you. Use it on networks where you trust every host.
-- **secret**: set the same `lanSecret` (8 or more characters) on every machine. Only sessions with that secret see and reach each other; open sessions and sessions with another secret are invisible. A secret of 1 to 7 characters is refused (LAN mode stays off and says why), never taken for open mode.
-- **off**: set `lan` to false. The sidecar opens no socket and the mod behaves as upstream's.
+Every other recipient is left to Claude Code: local sessions, Remote Control sessions and teammates work exactly as they do without the mod.
 
-```
-# secret mode
-claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lanSecret":"<8 or more characters>"}'
-# off
-claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lan":false}'
-# back to open mode
-claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lan":true,"lanSecret":""}'
-```
+Files go inline: each file is read and sent as an A2A file part with its bytes in base64 (1.0 `{ raw, filename, mediaType }`, 0.3 `{ kind: "file", file: { bytes, name, mimeType } }`, whichever the worker speaks). There is no file server and no URL. **The worker must accept file parts**; one that only reads text gets nothing useful from them. A file is at most 4 MiB (what one file read in a mod takes) and the files of one send at most 10 MiB together. A file that is missing, too big or past the total is reported with its error in the result, and the others are still sent; the result gives each sent file's size and sha256. Relative paths are under the session's folder.
 
-Restart Claude Code after a change. `lanName` sets the name others use (default `<hostname>/<folder>`; letters, digits and `. _ / -` only, 64 at most). `LAN_A2A_SECRET` and `LAN_A2A_NAME` in the environment work too, when the options are empty.
+The LAN mode of 0.4.0-0.6.1 (a per-session sidecar that found Claude Code sessions on the network) was removed in 0.7.0. To reach a Claude Code session on another machine, use Claude Code's built-in Remote Control.
 
-- A message in shows as a toast, a row in the `/a2a` pane, and a prompt that starts a turn. It is framed as another agent's words, not yours, and its text cannot close that frame. Files land in `~/.claude/lan-a2a/inbox/` (`LAN_A2A_INBOX` moves it), with their sha256.
-- `/a2a lan` shows the mode, this session's address and the sessions it sees; `/a2a list` and the `workers` tool list them too.
-- How it works: the mod starts a small Node sidecar (`sidecar/lan-a2a.mjs`, no dependencies) per session. It serves an A2A 1.0/0.3 endpoint on the first free TCP port in 41400-41499, or on a random port when all of those are taken (the announce carries the real port, so discovery still works, but a firewall rule for the range will not cover it; `LAN_A2A_PORT` pins a port or range, with no fallback). It announces itself out of every IPv4 interface by UDP multicast on `239.255.41.99:41399` (TTL 1, this subnet only) and to each interface's subnet broadcast address on port 41399, hellos its static peers over TCP (`POST /lan/hello`), and sends files by URL. A file is served only under an unguessable id for an hour, and a session downloads a file only from the host that sent the message.
+### Claude Code 的 agent 工具裡的 worker（繁體中文）
 
-Security: plain HTTP on the LAN, nothing is encrypted, in either mode. In open mode anyone on the network can reach your session; in secret mode anyone with the secret can, and the secret crosses the wire in clear. Claude is told the text is untrusted, but it still reads it, so prefer secret mode, or turn LAN mode off, on networks you do not control. The agent card at `/.well-known/agent-card.json` is public; in secret mode everything else needs the secret. Allow UDP 41399 and TCP 41400-41499 in a host firewall, and note that guest Wi-Fi with client isolation blocks multicast.
+用 `/a2a add` 登記的 worker，會以 `a2a:<alias>` 出現在 Claude Code 自己的 agent 工具裡，和那些工具原本列出的 session 並列：
 
-### Ports
+- **`ListAgents`**：在引擎自己的清單後面，以 `A2A workers` 一節列出。
+- **`SendMessage`**：`to: "a2a:<alias>"` 時，訊息照 `send` 工具的方式送給那個 worker：輸入框上方的動畫、面板、狀態列，慢的任務做完時會叫醒 Claude。
+- **`SendFile`**：`to: "a2a:<alias>"` 時，把檔案（可附訊息）送給那個 worker。這個版本的 Claude Code 沒有 `SendFile` 時，mod 會提供功能相同的 `send_file` 工具。
+- **`/list-agents`**（別名 `/peers`，你自己輸入的指令）：在內建清單後面列出同樣的 worker。沒有 worker 時就是內建的原本輸出，完全不變。
 
-| Port | Protocol | What | Fixed? |
-| --- | --- | --- | --- |
-| 41399 | UDP | discovery (multicast + subnet broadcast) | always, every session |
-| 41400 | TCP | messages and files of the first session on a host | yes, while it is free |
-| 41401-41499 | TCP | the 2nd, 3rd, … session on the same host, in start order | the next free one |
-| random | TCP | only when all of 41400-41499 are taken | no; `LAN_A2A_PORT` prevents it |
+其他收件對象一律交給 Claude Code 處理：本機 session、Remote Control session、teammate，行為和沒裝這個 mod 時完全一樣。
 
-One session per machine means TCP 41400. Open the whole range once (UDP 41399, TCP 41400-41499) and more sessions need no new rule. `LAN_A2A_PORT=41400` or `LAN_A2A_PORT=41400-41410` pins the port or range; with it set there is no random fallback, and a session that finds no free port there starts without LAN mode.
-
-A message that goes A → B but times out B → A means A reaches B's TCP port but B cannot reach A's: the firewall on A blocks incoming TCP. Seeing a peer in `ListAgents` only proves its UDP announce got through, not that its TCP port is open.
-
-### When sessions do not see each other
-
-`/a2a lan` says how each peer was found (`multicast`, `broadcast`, `hello` when it said hello to this session, `static` when this session reached it by address) and, when it sees none, what to check. Multicast and broadcast are UDP and are easily dropped: by a host firewall, by a VPN that takes the multicast route (Cloudflare WARP and the like), or by a router that does not pass multicast between wired and Wi-Fi. Plain TCP usually still works, so:
-
-- **Add the other machine by address.** `/a2a lan add <host>[:port]` (no port: 41400-41409 are tried) stores it and survives restarts; `/a2a lan remove <host>` drops it. Or set the `lanPeers` option, space-separated, for every session: `claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lanPeers":"192.168.0.131"}'`. Every few seconds this session says hello over TCP; the other side registers it from that one call, so adding on one machine is enough for both to see each other (as long as TCP reaches the side that added). A 0.5.x session has no hello; in open mode it is registered from its agent card, but it will not see this one until it is upgraded.
-- **Linux (ufw).** Allow the ports from your subnet:
-  ```
-  sudo ufw allow from 192.168.0.0/24 to any port 41399 proto udp
-  sudo ufw allow from 192.168.0.0/24 to any port 41400:41499 proto tcp
-  ```
-- **macOS.** System Settings → Network → Firewall: allow incoming connections for `node` (or turn off "Block all incoming connections" and stealth mode). Privacy & Security → Local Network: allow the terminal app that runs Claude Code, or multicast is silently dropped. A VPN such as Cloudflare WARP can route multicast into its tunnel: exclude your LAN (WARP: Preferences → Advanced → Split tunnels, or "Local network exclusion"), or rely on `/a2a lan add`.
-- **Check by hand.** `curl http://<ip>:41400/.well-known/agent-card.json` from the other machine shows TCP gets through; if it does, `/a2a lan add <ip>` will work.
-
-### LAN 模式（繁體中文）
-
-同一個區網裡、裝了這個 mod 且使用相同 LAN 模式的每個 Claude Code session，都會出現在內建的 `ListAgents` 工具裡，名稱是 `lan:<主機>/<資料夾>`，和本機的 session、你登記的 A2A worker（`a2a:<alias>`）並列。Claude 用內建的 `SendMessage`（`to: "lan:<名稱>"`，worker 則是 `"a2a:<alias>"`）傳訊息，用 `SendFile` 傳檔案；這個版本的 Claude Code 沒有 `SendFile` 時，mod 會改提供 `send_file` 工具。你自己執行內建的 `/list-agents` 指令（別名 `/peers`）時，同樣的 LAN agent 也會列在內建清單後面。
+檔案直接夾在訊息裡傳送：每個檔案讀進來後，以 base64 位元組放進 A2A 的 file part（1.0 為 `{ raw, filename, mediaType }`，0.3 為 `{ kind: "file", file: { bytes, name, mimeType } }`，依 worker 使用的版本而定），不架檔案伺服器、也沒有 URL。**worker 必須能接受 file part**；只讀文字的 worker 拿到也沒用。單一檔案最多 4 MiB（mod 一次讀檔的上限），一次傳送的所有檔案合計最多 10 MiB。檔案不存在、太大或超過總量時，會在結果裡列出該檔的錯誤，其餘檔案照常送出；結果會附上每個已送出檔案的大小與 sha256。相對路徑以 session 所在資料夾為準。
 
 #### 安裝時要填的設定
 
-全部留空或維持預設就能用：LAN 模式以 open 模式執行，名稱是 `<主機名>/<資料夾>`。之後要改，用 `/plugin`（選 a2a-mod → configure）或 `claude plugin configure a2a-mod@a2a-mod`，改完重開 Claude Code。
+全部留空或維持預設就能用。之後要改，用 `/plugin`（選 a2a-mod → configure）或 `claude plugin configure a2a-mod@a2a-mod`，改完重開 Claude Code。
 
 | 設定 | 代表什麼 | 建議填法 | 預設 |
 | --- | --- | --- | --- |
 | **A2A layout**（`layout`） | a2a 介面顯示多少：`full` 輸入框上方的卡片、狀態列與 worker 面板全開；`pane` 只有面板；`minimal` 只有狀態列 | 不用動；想畫面安靜就選 `minimal` | `full` |
 | **A2A animations**（`animations`） | 介面上的轉圈、閃光動畫；關掉改成靜態畫面 | 不用動 | 開 |
-| **Worker tokens**（`tokens`） | 用 `/a2a add` 加入的遠端 A2A worker 的 Bearer token，格式 `別名=token`，多組用空白隔開（`w1=abc w2=def`）。**跟 LAN 模式無關** | 留空；除非你加的 worker 需要 token | 空 |
-| **LAN mode**（`lan`） | 這個 session 要不要加入區網：找到其他 Claude Code session、讓它們傳訊息和檔案給你。關閉就完全不開任何 port | 要用區網功能就開 | 開 |
-| **LAN shared secret**（`lanSecret`） | 留空 = open 模式，區網上任何人都能連到這個 session。填 8 個字元以上 = secret 模式，只有填同一組密鑰的 session 互相看得到，**每台都要填一樣的**。1–7 個字元會被拒絕 | 自己家裡、信任的網路就留空；其他網路填一串長的隨機字串 | 空 |
-| **LAN name**（`lanName`） | 別人用來找你的名字：對方看到 `lan:<名字>`，也用它傳訊息給你。只能用字母、數字與 `. _ / -`，最多 64 字元 | 每台取一個短名字，例如 `macJavis`、`ubuntuJavis`；同一台開多個 session 時，留空（自動用資料夾區分）或各自取名 | `<主機名>/<資料夾>` |
-| **LAN static peers**（`lanPeers`） | 對方機器「自己找不到」時，直接用 IP 指定（防火牆、VPN、路由器擋掉 multicast 時用），格式 `主機[:port]`，多個用空白隔開 | 一開始留空；某台一直看不到，就填它的 IP，例如 `192.168.0.131`。只要一邊填就好。在 session 裡打 `/a2a lan add <ip>` 效果相同 | 空 |
+| **Worker tokens**（`tokens`） | 用 `/a2a add` 加入的遠端 A2A worker 的 Bearer token，格式 `別名=token`，多組用空白隔開（`w1=abc w2=def`） | 留空；除非你加的 worker 需要 token | 空 |
 
-LAN 模式**預設開啟，且為公開（open）模式**：不需密鑰、不需設定。共有三種模式，`/a2a lan` 會顯示目前是哪一種：
-
-- **open（預設：`lan` 開、`lanSecret` 留空）**：session 之間免設定即可互相發現。沒有任何驗證：**區網上任何人都能傳訊息給你的 session、把檔案放進 inbox**，名稱也可以隨便取。Claude 會被告知訊息來自未經驗證的主機（附 IP）、內容不可信，且不可因為訊息要求就執行指令、修改檔案或傳送檔案，必須先問你。只在你信任網路上每台主機時使用。
-- **secret**：每台機器設定同一組 `lanSecret`（至少 8 個字元）。只有持相同密鑰的 session 彼此看得到、傳得到；open 模式或其他密鑰的 session 互相看不到。1 到 7 個字元的密鑰會被拒絕（LAN 模式維持關閉並說明原因），不會被當成 open 模式。
-- **off**：把 `lan` 設為 false。sidecar 不開任何 socket，mod 的行為與上游相同。
-
-```
-# secret 模式
-claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lanSecret":"<至少 8 個字元>"}'
-# 關閉
-claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lan":false}'
-# 回到 open 模式
-claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lan":true,"lanSecret":""}'
-```
-
-改完要重開 Claude Code。`lanName` 可自訂別人用來稱呼你的名稱（預設 `<主機名>/<資料夾>`；只允許字母、數字與 `. _ / -`，最多 64 字元）。選項留空時，也可用環境變數 `LAN_A2A_SECRET`、`LAN_A2A_NAME`。
-
-- 收到訊息時會跳 toast、在 `/a2a` 面板多一列，並自動開始一個 turn；內容會標示為「另一個 agent 寫的、不是使用者」的不可信輸入，訊息內文無法關閉這個標示框。檔案存到 `~/.claude/lan-a2a/inbox/`（可用 `LAN_A2A_INBOX` 改），附 sha256。
-- `/a2a lan` 顯示目前模式、本 session 的位址與看得到的其他 session；`/a2a list` 和 `workers` 工具也會列出。
-- 運作方式（發現方式：每張網卡各送一次 UDP multicast 與子網廣播、對靜態 peer 走 TCP hello `POST /lan/hello`）：每個 session 會啟動一個小型 Node sidecar（`sidecar/lan-a2a.mjs`，零相依），在 41400-41499 中第一個空閒的 TCP port 提供 A2A 1.0/0.3 端點；這段全被占用時改用隨機 port（廣播會帶真正的 port，所以仍找得到，但針對該範圍的防火牆規則就涵蓋不到；`LAN_A2A_PORT` 可指定 port 或範圍，指定時不會退回隨機 port）。以 UDP multicast `239.255.41.99:41399`（TTL 1，只限本網段）互相發現，檔案以 URL 傳遞；檔案只以不可猜的 id 提供一小時，接收端也只從傳訊息的那台主機下載。
-
-安全：區網內走明文 HTTP，兩種模式都沒有加密。open 模式下網路上任何人都能連到你的 session；secret 模式下拿到密鑰的人就能，而且密鑰以明文在網路上傳送。雖然會告訴 Claude 這是不可信內容，它仍會讀到，所以在不是你掌控的網路上，請改用 secret 模式或關閉 LAN 模式。`/.well-known/agent-card.json` 是公開的；secret 模式下其餘都需要密鑰。主機防火牆要放行 UDP 41399 與 TCP 41400-41499；有「用戶端隔離」的訪客 Wi-Fi 會擋掉 multicast。
-
-#### Port 說明
-
-| Port | 協定 | 用途 | 固定嗎 |
-| --- | --- | --- | --- |
-| 41399 | UDP | 互相發現（multicast + 子網廣播） | 永遠固定，每個 session 都一樣 |
-| 41400 | TCP | 這台機器第一個 session 的訊息與檔案 | 沒被占用就固定是它 |
-| 41401-41499 | TCP | 同一台機器的第 2、3…個 session，依啟動順序 | 取下一個空閒的 |
-| 隨機 | TCP | 只有 41400-41499 全被占用時 | 不固定；設 `LAN_A2A_PORT` 可避免 |
-
-每台只開一個 session 就是 TCP 41400。防火牆一次放行整段（UDP 41399、TCP 41400-41499），之後多開 session 也不用再加規則。設 `LAN_A2A_PORT=41400` 或 `LAN_A2A_PORT=41400-41410` 可以固定 port 或範圍；設了就不會退到隨機 port，範圍內都被占用時，該 session 的 LAN 模式不會啟動。
-
-A → B 送得到、B → A 卻逾時：代表 A 連得到 B 的 TCP port，B 連不到 A 的，也就是 A 的防火牆擋了 TCP 連入。在 `ListAgents` 看得到對方，只證明它的 UDP 廣播到得了，不代表它的 TCP port 有開。
-
-#### 看不到其他 session 時
-
-`/a2a lan` 會列出每個 peer 是怎麼找到的（`multicast`、`broadcast`、`hello`：對方主動打招呼、`static`：本 session 依位址找到它），一個都沒有時會列出排查提示。multicast 與 broadcast 都是 UDP，很容易被擋：主機防火牆、把 multicast 路由進通道的 VPN（如 Cloudflare WARP）、或不在有線與 Wi-Fi 之間轉送 multicast 的路由器。一般 TCP 通常仍然通，所以：
-
-- **直接用位址加入對方。** `/a2a lan add <主機>[:port]`（不給 port 會試 41400-41409）會存起來、重開後仍在；`/a2a lan remove <主機>` 移除。也可設定 `lanPeers` 選項（空白分隔），對所有 session 生效：`claude plugin configure a2a-mod@a2a-mod --values-stdin <<< '{"lanPeers":"192.168.0.131"}'`。本 session 每隔幾秒用 TCP 打一次招呼，對方從這一次呼叫就會登記本 session，所以只要在一台機器上加，兩邊就互相看得到（前提是加的那一邊的 TCP 連得到對方）。0.5.x 的 session 沒有 hello；open 模式下會改用它的 agent card 登記，但它要升級後才看得到這一邊。
-- **Linux（ufw）**：從你的網段放行這些 port：
-  ```
-  sudo ufw allow from 192.168.0.0/24 to any port 41399 proto udp
-  sudo ufw allow from 192.168.0.0/24 to any port 41400:41499 proto tcp
-  ```
-- **macOS**：系統設定 → 網路 → 防火牆：允許 `node` 接受連入（或關閉「阻擋所有傳入連線」與隱形模式）。隱私權與安全性 → 區域網路：允許執行 Claude Code 的終端機 App，否則 multicast 會被默默丟掉。Cloudflare WARP 之類的 VPN 可能把 multicast 導進通道：把區網排除（WARP：偏好設定 → 進階 → Split tunnels，或「Local network exclusion」），或直接用 `/a2a lan add`。
-- **手動確認**：在另一台機器上 `curl http://<ip>:41400/.well-known/agent-card.json`，有回應代表 TCP 通，`/a2a lan add <ip>` 就會成功。
+0.4.0 到 0.6.1 的 LAN 模式（每個 session 啟動一個 sidecar，在區網上找其他 Claude Code session）已在 0.7.0 移除。要連到其他機器上的 Claude Code session，請改用 Claude Code 內建的 Remote Control。
 
 ## Learn more
 
@@ -221,4 +137,4 @@ A → B 送得到、B → A 卻逾時：代表 A 連得到 B 的 TCP port，B �
 
 ## Contributing and license
 
-Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). To report a vulnerability, see [SECURITY.md](SECURITY.md). MIT licensed: see [LICENSE](LICENSE). a2a-mod is by [Aliasgar Khimani](https://github.com/NovusEdge); LAN mode is by [HsuJavis](https://github.com/HsuJavis).
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). To report a vulnerability, see [SECURITY.md](SECURITY.md). MIT licensed: see [LICENSE](LICENSE). a2a-mod is by [Aliasgar Khimani](https://github.com/NovusEdge); this fork's changes are by [HsuJavis](https://github.com/HsuJavis).
