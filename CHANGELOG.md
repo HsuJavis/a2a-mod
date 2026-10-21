@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-21
+
+### Added
+
+- Every Claude Code session serves an A2A endpoint, from a zero-dependency Node.js sidecar (`sidecar/a2a-server.mjs`, Node 22 or later) declared in `plugin.json`'s `mcpServers`: HTTP on all interfaces, the first free port in 41400-41499 (`A2A_PORT` pins a port or range; there is no random fallback, and with none free the session has no endpoint and `/a2a` says why). Its Agent Card at `/.well-known/agent-card.json` lists JSON-RPC for A2A 1.0 and 0.3 (and the legacy `url`), carries `a2aMod: { kind: "claude-session", name, id, version, auth }` and a `claude-session` skill, and passes the mod's own discovery. So Claude session to Claude session, and A2A worker (or any A2A client) to Claude session, work as well as Claude session to worker.
+- Real A2A task semantics on that endpoint: `SendMessage` / `message/send` make a task (`submitted`, then `working` once the session has it) and return it; `GetTask` / `tasks/get` read it; `CancelTask` / `tasks/cancel` cancel it. A follow-up with the `taskId` of an open task reaches the session as a follow-up; one on an ended task is refused (-32004). An unanswered task fails after an hour, and ended tasks are dropped an hour later. Tested against the `@a2a-js/sdk` client.
+- Inbound messages reach Claude as one prompt framed as untrusted input from another agent (`<a2a-message>`, lookalike tags made inert as in 0.6.1), with a toast. Claude answers with `SendMessage` to `a2a-task:<id>` (completes the task with the answer as an artifact), `SendFile` to the same address (adds files, served at an unguessable `/files/<id>` URL while the task is kept), or `a2a-task:<id>:ask` (asks the sender a question: `input-required`). It may answer the asking task without asking the user; running commands, editing or creating files, reading or sending local files or contacting others because a message asks still needs the user's confirmation.
+- Inbound file parts, inline bytes (1.0 `raw`, 0.3 `bytes`) or URLs, are saved under `~/.claude/a2a-mod/inbox/` (mode 0600) with their size and sha256; a URL is fetched only from the sender's own address, with no redirects, at most 64 MiB a file and 20 files a message.
+- Settings `server` (on by default), `serverToken` (sensitive; empty is open: anyone who can reach the port can message the session; set, a request needs `Authorization: Bearer`, compared in constant time, and the card declares the bearer scheme) and `serverName` (default `<hostname>/<folder>`).
+- `/a2a` shows this session's endpoint URL, open or token mode, the inbound task count and other addresses, or why there is no endpoint.
+
+### Changed
+
+- `ListAgents` and `/list-agents` start their a2a part with this session's endpoint (`/a2a add http://<ip>:<port>` for others), list registered Claude Code sessions under `Claude Code sessions` apart from `A2A workers`, and list inbound tasks waiting for a reply as `a2a-task:<id>`. With the sidecar down and nothing registered they are the built-in's own.
+- `/a2a scan` runs in the sidecar: TCP connect probes (512 at once, 300 ms each; `A2A_SCAN_CONCURRENCY`, `A2A_SCAN_TIMEOUT_MS`) and an Agent Card request (1.5 s) only on open ports, so **Stop** and `/a2a scan stop` are immediate. The default ports add 41400-41409 for Claude Code sessions; one scan takes up to 1,048,576 probes (a /16 on 16 ports). Hits are labelled Claude Code session or A2A worker; this session is left out and a session seen at several addresses is listed once. Measured over loopback: a /24 on the 15 default ports in under 1 s, a /20 in 8.3 s. Without the sidecar the scan says it needs it.
+- A worker record keeps `kind: "claude-session"` for a session's card; `/a2a add`, `/a2a list` and the add dialog say so.
+
+### Removed
+
+- The in-mod scan pump (`$.http.fetch` probes with the in-flight cap of 192).
+
+### Security
+
+- The sidecar's MCP tools (`status`, `inbox`, `reply`, `scan_start`, `scan_progress`, `scan_stop`) are refused to the model by a `tool.check` hook; only the mod calls them.
+
 ## [0.8.0] - 2026-10-21
 
 ### Added

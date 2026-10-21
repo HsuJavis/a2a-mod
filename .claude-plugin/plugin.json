@@ -1,6 +1,6 @@
 {
   "name": "a2a-mod",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "A2A for Claude Code: every session serves an A2A endpoint, so Claude sessions and A2A workers hand each other tasks and files. Registered workers and sessions show in ListAgents and take SendMessage as a2a:<alias>; /a2a scan finds them on a private network.",
   "author": {
     "name": "HsuJavis",
