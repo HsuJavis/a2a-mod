@@ -90,6 +90,24 @@ export type PaneView = { open: string[]; replying: string[]; collapsed: string[]
 /** A reply the user sent from the pane, told to Claude with their next prompt. */
 export type SentReply = { worker: string; taskId: string; text: string }
 
+/** One Agent Card a network scan found. `known` is the alias it is already registered under. */
+export type ScanHit = { url: string; cardUrl: string; name: string; version: ProtocolVersion; skills: string[]; known?: string }
+
+/** The last `/a2a scan`: its progress while it runs, then what it found and what the person picked to add. */
+export type ScanState = {
+  phase: 'running' | 'done' | 'stopped'
+  target: string
+  ports: number[]
+  total: number
+  done: number
+  startedAt: number
+  /** When `done` was last counted: elapsed and ETA are read against it. */
+  at: number
+  hits: ScanHit[]
+  /** URLs of hits the person ticked in the scan pane. */
+  picked: string[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'a2a-mod': {
@@ -100,6 +118,7 @@ declare module 'claude-code' {
       played: string[]
       pane: PaneView
       replies: SentReply[]
+      scan: ScanState | null
     }
   }
 }
