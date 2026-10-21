@@ -1,6 +1,6 @@
 import type { Outcome, Target, TaskOutcome } from '../types/index.d.ts'
 import { printable } from './format.ts'
-import { cardUrlFor, parseCard, parseSend, parseTask, rpcBody, type Op, type OpParams } from './wire.ts'
+import { cardUrlFor, parseCard, parseSend, parseTask, rpcBody, type FileIn, type Op, type OpParams } from './wire.ts'
 
 export type Fetcher = (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => Promise<{ status: number; ok: boolean; text: string }>
 
@@ -56,7 +56,7 @@ async function rpc(fetch: Fetcher, t: Target, op: Op, params: OpParams): Promise
 
 const clean = <O extends Outcome>(o: O, token?: string): O => ({ ...o, text: scrub(o.text, token) })
 
-export const send = async (fetch: Fetcher, t: Target, input: { text: string; contextId?: string; taskId?: string }): Promise<Outcome> =>
+export const send = async (fetch: Fetcher, t: Target, input: { text: string; contextId?: string; taskId?: string; files?: FileIn[] }): Promise<Outcome> =>
   clean(parseSend(t.version, await rpc(fetch, t, 'send', input)), t.token)
 
 export const getTask = async (fetch: Fetcher, t: Target, id: string): Promise<TaskOutcome> =>

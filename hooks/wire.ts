@@ -4,7 +4,9 @@ import { printable } from './format.ts'
 const ORG_MAX = 60
 
 export type Op = 'send' | 'get' | 'cancel'
-export type OpParams = { text: string; contextId?: string; taskId?: string } | { id: string }
+/** A file sent inline: its bytes as standard base64. */
+export type FileIn = { name: string; mediaType: string; base64: string }
+export type OpParams = { text: string; contextId?: string; taskId?: string; files?: FileIn[] } | { id: string }
 export type CardInfo = Pick<Worker, 'name' | 'description' | 'cardUrl' | 'endpoint' | 'version' | 'skills' | 'needsAuth' | 'organization'>
 
 const METHODS: Record<ProtocolVersion, Record<Op, string>> = {
@@ -49,9 +51,12 @@ export function rpcBody(version: ProtocolVersion, op: Op, params: OpParams, id: 
   let p: Json
   if ('text' in params) {
     const ids = { ...(params.contextId ? { contextId: params.contextId } : {}), ...(params.taskId ? { taskId: params.taskId } : {}) }
+    const files = params.files ?? []
+    // A send of files alone carries no empty text part.
+    const said = params.text || !files.length
     p = version === '1.0'
-      ? { message: { messageId: crypto.randomUUID(), role: 'ROLE_USER', parts: [{ text: params.text }], ...ids }, configuration: { returnImmediately: true } }
-      : { message: { kind: 'message', messageId: crypto.randomUUID(), role: 'user', parts: [{ kind: 'text', text: params.text }], ...ids }, configuration: { blocking: false } }
+      ? { message: { messageId: crypto.randomUUID(), role: 'ROLE_USER', parts: [...(said ? [{ text: params.text }] : []), ...files.map(f => ({ raw: f.base64, filename: f.name, mediaType: f.mediaType }))], ...ids }, configuration: { returnImmediately: true } }
+      : { message: { kind: 'message', messageId: crypto.randomUUID(), role: 'user', parts: [...(said ? [{ kind: 'text', text: params.text }] : []), ...files.map(f => ({ kind: 'file', file: { bytes: f.base64, name: f.name, mimeType: f.mediaType } }))], ...ids }, configuration: { blocking: false } }
   } else {
     p = { id: params.id }
   }

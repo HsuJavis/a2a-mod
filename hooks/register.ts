@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer, UiCopyResult } from 'claude-code'
 import type { PaneView, RecentState, RecentTask, SentReply, Worker } from '../types/index.d.ts'
-import { isA2a, workersSection } from './agents.ts'
+import { isA2a, readFiles, sendFileText, sentOk, workersSection, type SendFileOut } from './agents.ts'
 import { A2AError, cancelTask, getTask, send } from './client.ts'
 import { runCommand, USAGE } from './command.ts'
 import { describeOutcome, FULL_MAX, wakeDetail, wakeLine } from './format.ts'
@@ -14,7 +14,7 @@ import { bandRows, bandTree, nextRedraw } from './ui/band.tsx'
 import { resultCard, textOf, useCard } from './ui/cards.tsx'
 import { paneTree, type PaneActions } from './ui/pane.tsx'
 import { parseSettings, type UiSettings } from './ui/settings.ts'
-import { isLive } from './wire.ts'
+import { isLive, type FileIn } from './wire.ts'
 
 type Engine = EngineInterface
 
@@ -128,6 +128,21 @@ const TOOLS = [
   },
 ]
 
+// Registered where this build has no SendFile tool of its own.
+const SEND_FILE_TOOL = {
+  name: 'send_file',
+  description: 'Send files, with an optional message, to a registered A2A worker (an a2a:<alias> address from ListAgents). They go inline, as file parts: 4 MiB a file, 10 MiB in all.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      to: { type: 'string', description: 'a2a:<alias> from ListAgents' },
+      files: { type: 'array', items: { type: 'string' }, description: 'Paths, absolute or relative to the working directory' },
+      message: { type: 'string' },
+    },
+    required: ['to', 'files'],
+  },
+}
+
 // The dialog shows on every call, whatever the permission mode. A reply that is not exactly the
 // Add/Remove label (free text under Other) is a no.
 const confirmOf = ($: Engine): Confirm => async (question, yes) => {
@@ -135,7 +150,7 @@ const confirmOf = ($: Engine): Confirm => async (question, yes) => {
 }
 
 export const INLINE_POLLS_MS = [500, 1000, 2000, 4000]
-type SendInput = { worker?: string; message?: string; taskId?: string; contextId?: string }
+type SendInput = { worker?: string; message?: string; taskId?: string; contextId?: string; files?: FileIn[] }
 /** What sendTask reads of a hook's `next`: the time left and the abort. */
 type Deadline = { readonly budget: { readonly remainingMs: number }; readonly signal: AbortSignal }
 
@@ -234,10 +249,10 @@ async function sendTask($: Engine, host: Host, callId: string, limit: Deadline, 
   try {
     const fetch = host.fetch
     const t = await bounded($, limit.budget.remainingMs, limit.signal, w.alias, targetOf(host, w))
-    let out = await bounded($, limit.budget.remainingMs, limit.signal, w.alias, send(fetch, t, { text: String(input.message ?? ''), taskId: input.taskId, contextId: input.contextId }))
+    let out = await bounded($, limit.budget.remainingMs, limit.signal, w.alias, send(fetch, t, { text: String(input.message ?? ''), taskId: input.taskId, contextId: input.contextId, files: input.files }))
     // A send answered with a message has no task id; its row is keyed by the call instead.
     const id = out.kind === 'task' ? out.taskId : callId
-    await noteSent(host, { worker: w.alias, taskId: id, contextId: out.contextId, text: String(input.message ?? ''), state: out.kind === 'task' ? out.state : 'working' }, 'claude')
+    await noteSent(host, { worker: w.alias, taskId: id, contextId: out.contextId, text: String(input.message ?? '') || (input.files ?? []).map(f => f.name).join(', '), state: out.kind === 'task' ? out.state : 'working' }, 'claude')
     for (const ms of INLINE_POLLS_MS) {
       if (out.kind !== 'task' || !isLive(out.state)) break
       if (limit.budget.remainingMs - ms < BUDGET_RESERVE_MS) break
@@ -264,6 +279,18 @@ async function sendTask($: Engine, host: Host, callId: string, limit: Deadline, 
   }
 }
 
+// SendFile's and send_file's send to an a2a:<alias> worker: the files read here, sent inline with the message.
+async function sendFiles($: Engine, host: Host, callId: string, limit: Deadline, to: string, paths: string[], message: string): Promise<SendFileOut> {
+  const alias = to.slice('a2a:'.length)
+  const w = await workerOr(host, alias)
+  if (typeof w === 'string') return { success: false, message: w, files: paths.map(path => ({ path, error: 'not sent' })) }
+  const { files, out } = await readFiles({ stat: path => $.fs.stat(path), bytes: async path => (await $.fs.read(path, { as: 'bytes' })).base64 }, paths)
+  if (!files.length) return { success: false, message: `a2a: no file could be read, so nothing was sent to ${w.alias}.`, files: out }
+  const text = await sendTask($, host, callId, limit, { worker: w.alias, message, files })
+  if (!sentOk(text)) return { success: false, message: text, files: out.map(f => (f.error ? f : { path: f.path, error: 'not sent' })) }
+  return { success: true, message: text, files: out }
+}
+
 // The workers as ListAgents and /list-agents list them: oldest first.
 const sortedWorkers = async (host: Host) => Object.values(await loadWorkers(host)).sort((a, b) => a.addedAt - b.addedAt)
 
@@ -283,6 +310,7 @@ export const register: Register = (on, options) => {
     await resume(hostOf($, settingTokens, ui))
     // The engine keeps a pane open across reloads, so one opened under another layout would stay.
     if (ui.layout === 'minimal') try { await $.ui.close({ id: PANE.id }) } catch {}
+    try { if (!(await $.tool.list()).some(t => t.name === 'SendFile')) await $.tool.register(SEND_FILE_TOOL) } catch {}
     return next(e)
   })
 
@@ -441,7 +469,20 @@ export const register: Register = (on, options) => {
     // The tool's structured messages (shutdown requests and the like) are for teammates, not workers.
     const message = typeof e.message === 'string' ? e.message : JSON.stringify(e.message)
     const text = await sendTask($, hostOf($, settingTokens, ui), e.tool_use_id, next, { worker: to.slice('a2a:'.length), message })
-    return { result: { success: !/^(a2a: |No worker)/.test(text), message: text } }
+    return { result: { success: sentOk(text), message: text } }
+  })
+
+  on('tool.call', { tool: 'SendFile' }, async ($, e, next) => {
+    if (!isA2a(e.to)) return next(e)
+    return { result: await sendFiles($, hostOf($, settingTokens, ui), e.tool_use_id, next, e.to, e.files, e.message ?? '') }
+  })
+
+  on('tool.call', { tool: 'mcp__a2a-mod__send_file' }, async ($, e, next) => {
+    const input = e as unknown as { to?: unknown; files?: unknown; message?: unknown }
+    const to = String(input.to ?? '')
+    if (!isA2a(to)) return { result: `a2a: send_file takes an a2a:<alias> worker from ListAgents, not ${to.slice(0, 80) || 'nothing'}.` }
+    const files = Array.isArray(input.files) ? input.files.map(String) : []
+    return { result: sendFileText(await sendFiles($, hostOf($, settingTokens, ui), e.tool_use_id, next, to, files, String(input.message ?? ''))) }
   })
 
   on('tool.call', { tool: 'mcp__a2a-mod__add_worker' }, async ($, e) =>
