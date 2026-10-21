@@ -16,7 +16,8 @@ export const CONCURRENCY = 128
  * Host requests not yet settled, abandoned ones included. A probe gives up after PROBE_TIMEOUT_MS,
  * but $.http.fetch takes no signal, so the host's request runs on to its own 30 s timeout. Kept
  * under Bun's default of 256 simultaneous fetches, past which requests queue (and would time out
- * here before they were even sent), with room for the session's own requests.
+ * here before they were even sent), with room for the session's own requests. The 2.1.305 binary
+ * reads BUN_CONFIG_MAX_HTTP_REQUESTS; 256 is Bun's documented default, not read from this build.
  */
 export const MAX_IN_FLIGHT = 192
 export const PROBE_TIMEOUT_MS = 1000
@@ -316,7 +317,7 @@ export async function scanCommand(env: ScanEnv, host: Host, words: string[]): Pr
   if (words[0] === 'stop' && words.length === 1) {
     if (!active) return 'No scan is running.'
     active.stop = true
-    return 'Stopping the scan: it ends once the probes in flight answer or time out, within a second or so.'
+    return 'Stopping the scan: it ends once the probes in flight answer or time out, within a second, or up to 30 s when the network is dropping probes.'
   }
   if (active) {
     const s = await env.read()

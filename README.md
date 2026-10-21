@@ -107,7 +107,7 @@ When it ends, tick the workers you want in the pane and press **Add selected**. 
 
 - **Targets**: an IPv4 CIDR up to a /16, one address, or a range `a.b.c.d-e.f.g.h` (at most 65,536 addresses, inside one block). Only private addresses: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 (CGNAT, Tailscale), 169.254.0.0/16 and 127.0.0.0/8. Anything else is refused, and so is anything wider than a /16. The network and broadcast addresses of a /30 or wider are skipped.
 - **Ports**: 80, 443, 8000, 8080 and 41241 by default; `--ports` replaces them with a list such as `8000,9000-9010` (1-65535). https is used on 443 and http elsewhere; `--https` tries https on every port. One scan makes at most 524,288 probes (a /16 on 8 ports).
-- **Pace**: 128 probes at once, each given 1 s. Progress updates at most 4 times a second. A mod cannot cancel a request it made, so a probe that gives up leaves the host's request running to its own 30 s timeout; the scan keeps at most 192 of those unsettled at once (under the 256 simultaneous fetches Bun allows by default), and waits when it reaches that.
+- **Pace**: 128 probes at once, each given 1 s. Progress updates at most 4 times a second. A mod cannot cancel a request it made, so a probe that gives up leaves the host's request running to its own 30 s timeout; the scan keeps at most 192 of those unsettled at once (under the 256 simultaneous fetches Bun's documentation gives as its default, `BUN_CONFIG_MAX_HTTP_REQUESTS`), and waits when it reaches that.
 - **How long**: a /24 on the 5 default ports is 1,270 probes: about 20 s when most addresses are empty, about 3.5 minutes at worst. A /16 on 5 ports is 327,670 probes: a few minutes when the addresses answer or refuse at once, about 85 minutes when most addresses are empty on your own subnet (the host gives up on each after about 3 s, so 192 in flight is about 64 probes a second), and up to about 14 hours when the network silently drops them (each held for the host's 30 s). Scan the smallest range you can.
 - Only `/.well-known/agent-card.json` is asked for; a worker that serves only the older `/.well-known/agent.json` is not found.
 - **Claude Code sessions are not found by a scan.** They serve no A2A endpoint (the LAN mode that gave them one was removed in 0.7.0); use Claude Code's Remote Control for those.
@@ -131,7 +131,7 @@ When it ends, tick the workers you want in the pane and press **Add selected**. 
 
 - **目標**：IPv4 CIDR（最大 /16）、單一位址，或範圍 `a.b.c.d-e.f.g.h`（最多 65,536 個位址，且須在同一個區塊內）。只接受私有位址：10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、100.64.0.0/10（CGNAT、Tailscale）、169.254.0.0/16 和 127.0.0.0/8；其他一律拒絕，比 /16 大的也拒絕。/30 以上的網段會跳過網路位址和廣播位址。
 - **Port**：預設 80、443、8000、8080、41241；`--ports` 可換成 `8000,9000-9010` 這類清單（1-65535）。443 用 https，其他用 http；`--https` 則每個 port 都用 https。一次掃描最多 524,288 次探測（/16 乘 8 個 port）。
-- **速度**：同時 128 個探測，每個等 1 秒。進度每秒最多更新 4 次。mod 無法取消自己發出的請求，探測放棄後主機端的請求仍會跑到它自己的 30 秒逾時；掃描最多同時留 192 個這種未結束的請求（低於 Bun 預設的 256 個同時 fetch 上限），到了就等。
+- **速度**：同時 128 個探測，每個等 1 秒。進度每秒最多更新 4 次。mod 無法取消自己發出的請求，探測放棄後主機端的請求仍會跑到它自己的 30 秒逾時；掃描最多同時留 192 個這種未結束的請求（低於 Bun 文件所寫的預設上限：同時 256 個 fetch，`BUN_CONFIG_MAX_HTTP_REQUESTS`），到了就等。
 - **要多久**：/24 掃 5 個預設 port 是 1,270 次探測：大多是空位址時約 20 秒，最差約 3.5 分鐘。/16 掃 5 個 port 是 327,670 次：位址會立刻回應或拒絕時幾分鐘；同網段大多是空位址時約 85 分鐘（主機約 3 秒放棄一個，192 個同時進行約每秒 64 次）；網路默默丟棄封包時最久約 14 小時（每個都卡滿主機的 30 秒）。範圍能多小就多小。
 - 只要 `/.well-known/agent-card.json`；只提供舊版 `/.well-known/agent.json` 的 worker 掃不到。
 - **掃描找不到 Claude Code session。** 它們沒有 A2A 端點（提供端點的 LAN 模式已在 0.7.0 移除）；要連 Claude Code session 請用 Claude Code 的 Remote Control。
