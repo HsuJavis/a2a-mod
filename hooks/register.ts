@@ -1,18 +1,20 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer, UiCopyResult } from 'claude-code'
-import type { PaneView, RecentState, RecentTask, SentReply, Worker } from '../types/index.d.ts'
+import type { PaneView, RecentState, RecentTask, ScanState, SentReply, Worker } from '../types/index.d.ts'
 import { isA2a, readFiles, sendFileText, sentOk, workersSection, type SendFileOut } from './agents.ts'
 import { A2AError, cancelTask, getTask, send } from './client.ts'
 import { runCommand, USAGE } from './command.ts'
 import { describeOutcome, FULL_MAX, wakeDetail, wakeLine } from './format.ts'
 import { addWorkerTool, removeWorkerTool, type Confirm } from './manage.ts'
 import { changeRecent, isOpen, isWaiting, noteCall, noteSent, noteState, readRecent, visible } from './recent.ts'
-import { loadWorkers, noteFailure, own, parseTokens, targetOf, workerOr, type Host, type SettingTokens } from './registry.ts'
+import { loadWorkers, noteFailure, own, parseTokens, splitArgs, targetOf, workerOr, type Host, type SettingTokens } from './registry.ts'
+import { addPicked, aliasesFor, isScanning, scanCommand, scanStatus, settleOrphan, stopScan, togglePick, type ScanEnv } from './scan.ts'
 import { resume, showStatus, track } from './tracker.ts'
 import { palette, type Palette } from './ui/color.ts'
 import { bandRows, bandTree, nextRedraw } from './ui/band.tsx'
 import { resultCard, textOf, useCard } from './ui/cards.tsx'
 import { paneTree, type PaneActions } from './ui/pane.tsx'
+import { scanTree } from './ui/scan.tsx'
 import { parseSettings, type UiSettings } from './ui/settings.ts'
 import { isLive, type FileIn } from './wire.ts'
 
@@ -30,6 +32,9 @@ const EMPTY_VIEW: PaneView = { open: [], replying: [], collapsed: [], all: [], c
 const paneView = atom({ plugin: 'a2a-mod', key: 'pane' } as const, EMPTY_VIEW)
 const replies = atom({ plugin: 'a2a-mod', key: 'replies' } as const, [] as SentReply[])
 const played = atom({ plugin: 'a2a-mod', key: 'played' } as const, [] as string[])
+const scanAtom = atom({ plugin: 'a2a-mod', key: 'scan' } as const, null as ScanState | null)
+// Wide enough for a hit's URL and its alias.
+const SCAN_PANE = { id: 'a2a-scan', title: 'A2A scan', columns: 64, rows: 16 } as const
 const PLAYED_MAX = 200
 const TOKEN_CMD_TIMEOUT_MS = 10_000
 // A pane button's own deadline for the worker calls it makes.
@@ -68,7 +73,8 @@ function hostOf($: Engine, settingTokens: SettingTokens, ui: UiSettings): Host {
     writeCalls: async (calls, ifVersion) => (await $.state.set(CALLS, calls, { ifVersion })).isSet,
     readDurations: async () => ((await $.store.get('durations')) as Record<string, number[]> | undefined) ?? {},
     writeDurations: all => $.store.set('durations', all),
-    status: text => $.ui.status(text),
+    // A running scan's progress wins the status line; the tasks get it back when the scan ends.
+    status: text => $.ui.status(scanStatus() ?? text),
     anim: ui.animations,
     now: () => nowOf($),
     every: (ms, fn) => $.clock.every(ms, fn),
@@ -81,6 +87,23 @@ function hostOf($: Engine, settingTokens: SettingTokens, ui: UiSettings): Host {
         if (at >= 0) pendingWakes.splice(at, 1)
       }
     },
+  }
+}
+
+function scanEnvOf($: Engine, host: Host, ui: UiSettings): ScanEnv {
+  return {
+    fetch: host.fetch,
+    sleep: (ms, signal) => $.clock.sleep(ms, signal ? { signal } : undefined),
+    later: fn => { $.clock.after(1, () => void fn()) },
+    read: () => read($, scanAtom),
+    write: async change => { await update($, scanAtom, change) },
+    status: text => {
+      if (text !== undefined) $.ui.status(text)
+      else void showStatus(host)
+    },
+    log: text => $.ui.log(text),
+    open: async () => { if (ui.layout !== 'minimal') try { await $.ui.open(SCAN_PANE) } catch {} },
+    toast: text => $.ui.toast(text),
   }
 }
 
@@ -305,9 +328,11 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await Promise.all([
       ...TOOLS.map(t => $.tool.register(t)),
-      $.command.register({ name: 'a2a', description: 'Manage A2A worker agents', argumentHint: 'add <url> [alias] [--token-setting | --token-cmd "<cmd>" | --token-file <path>] | list | remove <alias>' }),
+      $.command.register({ name: 'a2a', description: 'Manage A2A worker agents', argumentHint: 'add <url> [alias] [--token-setting | --token-cmd "<cmd>" | --token-file <path>] | list | remove <alias> | scan <cidr> [--ports <list>] | scan stop' }),
     ])
-    await resume(hostOf($, settingTokens, ui))
+    const host = hostOf($, settingTokens, ui)
+    await resume(host)
+    await settleOrphan(scanEnvOf($, host, ui))
     // The engine keeps a pane open across reloads, so one opened under another layout would stay.
     if (ui.layout === 'minimal') try { await $.ui.close({ id: PANE.id }) } catch {}
     try { if (!(await $.tool.list()).some(t => t.name === 'SendFile')) await $.tool.register(SEND_FILE_TOOL) } catch {}
@@ -315,7 +340,16 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'a2a' }, async ($, e) => {
-    if (e.args.trim()) return { text: await runCommand(hostOf($, settingTokens, ui), e.args) }
+    const host = hostOf($, settingTokens, ui)
+    if (/^scan(\s|$)/.test(e.args.trim())) {
+      try {
+        return { text: await scanCommand(scanEnvOf($, host, ui), host, splitArgs(e.args.trim()).slice(1)) }
+      } catch (err) {
+        if (err instanceof Error) return { text: `a2a: ${err.message}` }
+        throw err
+      }
+    }
+    if (e.args.trim()) return { text: await runCommand(host, e.args) }
     // Only the person opens the pane, so a running task never switches the dock away from /diff.
     // Asked, it is placed at any width; another mod's ui.open hook may still deny it.
     if (ui.layout !== 'minimal') try { await $.ui.open({ ...PANE, columns: PANE_COLUMNS, rows: PANE_ROWS }) } catch {}
@@ -432,6 +466,20 @@ export const register: Register = (on, options) => {
     paneExpiry = due === undefined ? undefined : $.clock.after(due, () => $.ui.invalidate('ui.render'))
     const rows = aging.filter(t => isOpen(t) || (t.endedAt ?? t.startedAt) > view.clearedAt)
     return paneTree($.ui.resolve(e), { surface: e.surface, width: e.props.bodyColumns, height: e.props.scroll.bodyRows, now, anim: ui.animations, pal, workers: shown, rows, durations, view, drafts }, act)
+  })
+
+  on('ui.render', { component: 'Pane', requestId: SCAN_PANE.id }, async ($, e) => {
+    const host = hostOf($, settingTokens, ui)
+    const env = scanEnvOf($, host, ui)
+    const [state, workers] = await Promise.all([read($, scanAtom), loadWorkers(host)])
+    return scanTree($.ui.resolve(e), {
+      width: e.props.bodyColumns, height: e.props.scroll.bodyRows, state, running: isScanning(),
+      aliases: aliasesFor(state?.hits ?? [], Object.keys(workers), settingTokens.map),
+    }, {
+      stop: stopScan,
+      toggle: url => void togglePick(env, url),
+      add: () => addPicked(env, host),
+    })
   })
 
   on('tool.call', { tool: 'mcp__a2a-mod__workers' }, async $ => {

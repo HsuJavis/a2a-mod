@@ -1,7 +1,8 @@
-import { test, expect, mock, type Engine } from 'claude-code/testing'
+import { test, expect, mock, type Engine, type MockClock } from 'claude-code/testing'
 import type { RenderSurface } from 'claude-code'
 import { engineUi, heldStore, PANE_PROPS, runA2a, STORE, textUnder, type On } from './kit.ts'
 import { fixtures as f } from './fixtures.ts'
+import { MAX_HITS } from '../hooks/scan.ts'
 
 // The test runtime has timers; the mod lib in tsconfig does not declare them.
 declare const setTimeout: (fn: () => void, ms: number) => unknown
@@ -33,11 +34,13 @@ function statuses(on: On) {
   return seen
 }
 
-async function finished($: Engine): Promise<string> {
+/** Lets the scan run (the kit's clock moves only when told) until /a2a scan says it ended. */
+async function finished($: Engine, clock: MockClock): Promise<string> {
   for (let i = 0; i < 200; i++) {
     const text = (await runA2a($, 'scan')).text ?? ''
     if (/Scan (done|stopped)/.test(text)) return text
-    await wait(10)
+    await clock.advance(250)
+    await wait(5)
   }
   throw new Error('the scan never finished')
 }
@@ -57,13 +60,14 @@ test('/a2a scan refuses a public target and a prefix wider than /16, and probes 
 
 test('/a2a scan runs in the background, opens the scan pane and lists what it found with /a2a add lines', async ($, on) => {
   mock.store(on)
+  const clock = mock.clock(on)
   const ui = engineUi(on)
   const net = lan(on, { 'http://10.0.0.5:8000': card('Fake Worker') })
   const started = (await runA2a($, 'scan 10.0.0.0/29 --ports 8000,9000')).text
   expect(started).toContain('12 probes')
   expect(started).toContain('/a2a scan stop')
   expect(ui.opened).toContain('a2a-scan')
-  const text = await finished($)
+  const text = await finished($, clock)
   expect(net.seen.length).toBe(12)
   expect(text).toContain('Scan done')
   expect(text).toContain('12/12')
@@ -76,24 +80,26 @@ test('/a2a scan runs in the background, opens the scan pane and lists what it fo
 
 test('only one scan runs at a time, and /a2a scan stop ends it', async ($, on) => {
   mock.store(on)
+  const clock = mock.clock(on)
   engineUi(on)
   const net = lan(on, {}, { hold: true })
   await runA2a($, 'scan 10.0.0.0/24 --ports 8000')
   expect((await runA2a($, 'scan 10.0.1.0/24')).text).toContain('already running')
   expect((await runA2a($, 'scan stop')).text).toContain('Stopping')
   net.open()
-  expect(await finished($)).toContain('Scan stopped')
+  expect(await finished($, clock)).toContain('Scan stopped')
   expect(net.seen.length).toBeLessThan(254)
   expect((await runA2a($, 'scan stop')).text).toContain('No scan is running')
 })
 
 test('the status line shows the scan progress, and is given back when it ends', async ($, on) => {
   mock.store(on)
+  const clock = mock.clock(on)
   engineUi(on)
   const seen = statuses(on)
   lan(on, {})
   await runA2a($, 'scan 10.0.0.0/28 --ports 8000')
-  await finished($)
+  await finished($, clock)
   const lines = seen.filter((s): s is string => typeof s === 'string' && s.includes('scan'))
   expect(lines.some(s => s.includes('/14'))).toBe(true)
   expect(lines.some(s => s.includes('%'))).toBe(true)
@@ -102,26 +108,28 @@ test('the status line shows the scan progress, and is given back when it ends', 
 
 test('the scan pane shows progress with a Stop button while it runs', async ($, on) => {
   mock.store(on)
+  const clock = mock.clock(on)
   engineUi(on)
   const net = lan(on, {}, { hold: true })
   await runA2a($, 'scan 10.0.0.0/24 --ports 8000')
   const pane = await mountScan($, 'terminal')
-  await wait(30)
+  await clock.advance(1)
   const drawn = textUnder(await pane.drawn())
   expect(drawn).toContain('/254')
   expect(drawn).toContain('%')
   expect(drawn).toContain('ETA')
   await pane.press({ key: 'scan-stop' })
   net.open()
-  expect(await finished($)).toContain('Scan stopped')
+  expect(await finished($, clock)).toContain('Scan stopped')
 })
 
 test('in the pane the person ticks hits and Add adds only the ticked ones, with the usual Worker record', async ($, on) => {
   const held = heldStore(on)
+  const clock = mock.clock(on)
   engineUi(on)
   lan(on, { 'http://10.0.0.5:8000': card('Fake Worker'), 'http://10.0.0.6:8000': card('Other Worker') })
   await runA2a($, 'scan 10.0.0.0/29 --ports 8000')
-  await finished($)
+  await finished($, clock)
   const pane = await mountScan($, 'terminal')
   expect(textUnder(await pane.drawn())).toContain('Other Worker')
   // Add is there only once something is ticked.
@@ -140,10 +148,11 @@ test('in the pane the person ticks hits and Add adds only the ticked ones, with 
 
 test('a hit ticked twice is unticked, and an alias already taken gets a suffix', async ($, on) => {
   const held = heldStore(on, { workers: { 'fake-worker': { ...STORE.workers.fake, alias: 'fake-worker', cardUrl: 'http://elsewhere.test/.well-known/agent-card.json' } } })
+  const clock = mock.clock(on)
   engineUi(on)
   lan(on, { 'http://10.0.0.5:8000': card('Fake Worker'), 'http://10.0.0.6:8000': card('Fake Worker') })
   await runA2a($, 'scan 10.0.0.0/29 --ports 8000')
-  await finished($)
+  await finished($, clock)
   const pane = await mountScan($, 'terminal')
   await pane.press({ key: 'pick:http://10.0.0.5:8000' })
   await pane.press({ key: 'pick:http://10.0.0.6:8000' })
@@ -155,12 +164,29 @@ test('a hit ticked twice is unticked, and an alias already taken gets a suffix',
 
 test('an endpoint already registered is marked already added and offers no tick', async ($, on) => {
   heldStore(on, { workers: { fake: { ...STORE.workers.fake, cardUrl: 'http://10.0.0.5:8000/.well-known/agent-card.json' } } })
+  const clock = mock.clock(on)
   engineUi(on)
   lan(on, { 'http://10.0.0.5:8000': card('Fake Worker') })
   await runA2a($, 'scan 10.0.0.5 --ports 8000')
-  const text = await finished($)
+  const text = await finished($, clock)
   expect(text).toContain('already added as fake')
   expect(text).not.toContain('/a2a add http://10.0.0.5:8000')
   const pane = await mountScan($, 'terminal')
   expect(await pane.find({ type: 'Button', key: 'pick:http://10.0.0.5:8000' })).toBeUndefined()
+})
+
+test('a scan where every host answers keeps the first hits and its pane stays under the tree limit', async ($, on) => {
+  mock.store(on)
+  const clock = mock.clock(on)
+  engineUi(on)
+  const long = { ...f.card_v1, name: 'W'.repeat(200), skills: Array.from({ length: 10 }, (_, i) => ({ id: `${'s'.repeat(60)}${i}`, name: 'S' })) }
+  on('http.fetch', async () => ({ value: { status: 200, ok: true, headers: {}, text: JSON.stringify(long) } }))
+  await runA2a($, 'scan 10.0.0.0/25 --ports 8000')
+  const text = await finished($, clock)
+  expect(text).toContain(`Found ${MAX_HITS}:`)
+  expect(text).toContain(`only the first ${MAX_HITS} are kept`)
+  const pane = await mountScan($, 'terminal')
+  const tree = JSON.stringify(await pane.drawn())
+  expect(tree).not.toContain('engine Pane')
+  expect(tree.length).toBeLessThan(100_000)
 })

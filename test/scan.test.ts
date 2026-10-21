@@ -77,7 +77,7 @@ test('ports outside 1-65535, reversed ranges and junk are refused', () => {
 })
 
 test('the default ports are 80, 443, 8000, 8080 and 41241, https on 443 alone', () => {
-  const plan = planScan(['10.0.0.0/30']) as Plan
+  const plan = planScan(['10.0.0.4/30']) as Plan
   expect(plan.ports).toEqual([...DEFAULT_PORTS])
   expect(plan.total).toBe(2 * 5)
   const urls = Array.from({ length: plan.total }, (_, i) => probeBase(plan, i))
@@ -207,7 +207,7 @@ test('connection errors, non-JSON answers and non-cards are silent misses', asyn
 })
 
 test('a hit already registered is marked with its alias', async () => {
-  const plan = planScan(['10.0.0.0/30', '--ports', '8000']) as Plan
+  const plan = planScan(['10.0.0.4/30', '--ports', '8000']) as Plan
   const net = lan({ 'http://10.0.0.5:8000': card('Alpha'), 'http://10.0.0.6:8000': card('Beta') })
   const known = new Map([['http://10.0.0.5:8000/.well-known/agent-card.json', 'alpha']])
   const out = await runScan(plan, deps(net.fetch, { known }))
@@ -221,7 +221,7 @@ test('progress is reported at most once per interval, and always at the end', as
   const seen: Progress[] = []
   // Each probe moves the clock 10 ms: 254 probes span 2.54 s, so about 10 reports at 250 ms.
   const fetch: Fetcher = async (url, init) => { clock += 10; return net.fetch(url, init) }
-  await runScan(plan, deps(fetch, { now: () => clock, progressMs: 250, onProgress: p => { seen.push({ ...p, hits: [...p.hits] }) } }))
+  await runScan(plan, deps(fetch, { concurrency: 1, now: () => clock, progressMs: 250, onProgress: p => { seen.push({ ...p, hits: [...p.hits] }) } }))
   expect(seen.length).toBeGreaterThanOrEqual(5)
   expect(seen.length).toBeLessThanOrEqual(13)
   expect(seen.at(-1)).toMatchObject({ done: 254, total: 254, finished: true, stopped: false })

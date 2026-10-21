@@ -10,6 +10,8 @@ export const USAGE = [
   '      (re-run to refresh; with no token flag the token comes from the tokens setting)',
   '  /a2a list',
   '  /a2a remove <alias>',
+  '  /a2a scan <cidr | ip | from-to> [--ports <list>] [--https]   find workers on a private network',
+  '  /a2a scan stop',
   '',
   'Never type a token here: slash commands are kept in the transcript.',
 ].join('\n')
