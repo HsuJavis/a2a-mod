@@ -1,10 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer, UiCopyResult } from 'claude-code'
-import type { LanPeer, LanView, PaneView, RecentState, RecentTask, SentReply, Worker } from '../types/index.d.ts'
+import type { PaneView, RecentState, RecentTask, SentReply, Worker } from '../types/index.d.ts'
+import { isA2a, workersSection } from './agents.ts'
 import { A2AError, cancelTask, getTask, send } from './client.ts'
 import { runCommand, USAGE } from './command.ts'
 import { describeOutcome, FULL_MAX, wakeDetail, wakeLine } from './format.ts'
-import { agentSections, EMPTY_LAN, framed, isA2a, isLan, LAN_SERVER, LanDown, messagesOf, modeLine, nextView, NO_PEERS_HINT, NONE_SEEN_CMD, offText, peerSection, peersOf, POLL_LAN_MS, resultOf, sendFileResult, sendFileText, sentResult, SIDECAR_DENY, staticPeer, STATIC_USAGE, toastText, type LanStatus, type Sidecar } from './lan.ts'
 import { addWorkerTool, removeWorkerTool, type Confirm } from './manage.ts'
 import { changeRecent, isOpen, isWaiting, noteCall, noteSent, noteState, readRecent, visible } from './recent.ts'
 import { loadWorkers, noteFailure, own, parseTokens, targetOf, workerOr, type Host, type SettingTokens } from './registry.ts'
@@ -31,7 +31,6 @@ const paneView = atom({ plugin: 'a2a-mod', key: 'pane' } as const, EMPTY_VIEW)
 const replies = atom({ plugin: 'a2a-mod', key: 'replies' } as const, [] as SentReply[])
 const played = atom({ plugin: 'a2a-mod', key: 'played' } as const, [] as string[])
 const PLAYED_MAX = 200
-const lanView = atom({ plugin: 'a2a-mod', key: 'lan' } as const, EMPTY_LAN as LanView)
 const TOKEN_CMD_TIMEOUT_MS = 10_000
 // A pane button's own deadline for the worker calls it makes.
 const PRESS_MS = 9000
@@ -128,21 +127,6 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { alias: { type: 'string', description: 'Worker alias from the workers tool' } }, required: ['alias'] },
   },
 ]
-
-// Registered in LAN mode where this build has no SendFile tool of its own.
-const SEND_FILE_TOOL = {
-  name: 'send_file',
-  description: 'Send files, with an optional message, to a Claude Code session on the LAN (a lan:<name> address from ListAgents). They are saved in its inbox folder and it is told where.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      to: { type: 'string', description: 'lan:<name> from ListAgents' },
-      files: { type: 'array', items: { type: 'string' }, description: 'Paths, absolute or relative to the working directory' },
-      message: { type: 'string' },
-    },
-    required: ['to', 'files'],
-  },
-}
 
 // The dialog shows on every call, whatever the permission mode. A reply that is not exactly the
 // Add/Remove label (free text under Other) is a no.
@@ -280,107 +264,12 @@ async function sendTask($: Engine, host: Host, callId: string, limit: Deadline, 
   }
 }
 
-// The loader refuses $ passed across an import, so the sidecar's calls are built here.
-const sidecarOf = ($: Engine): Sidecar => async (tool, args = {}) => {
-  const c = await $.mcp.connect(LAN_SERVER)
-  if (!c.isConnected) throw new LanDown(c.message)
-  return resultOf(await $.mcp.call(c.server, tool, args))
-}
-
-const why = (err: unknown) => (err instanceof Error ? err.message : String(err))
-
-/** LAN mode as the sidecar has it now, or why it could not be asked. */
-async function lanNow($: Engine): Promise<{ status?: LanStatus; peers: LanPeer[]; down?: string }> {
-  const sc = sidecarOf($)
-  try {
-    const status = (await sc('status')) as LanStatus
-    return { status, peers: status.configured ? peersOf((await sc('peers')).peers) : [] }
-  } catch (err) {
-    return { peers: [], down: why(err) }
-  }
-}
-
-/** A send through the sidecar; its error is a sentence for Claude. Relative paths are the session's. */
-async function lanSend($: Engine, args: { to: string; text: string; files?: string[] }): Promise<Record<string, any>> {
-  try {
-    const out = await sidecarOf($)('send', { ...args, cwd: await $.session.cwd() })
-    if (out.ok === true) return out
-    return { ...out, error: /^not configured/.test(String(out.error)) ? offText(undefined) : `a2a lan: ${String(out.error ?? 'the send failed')}` }
-  } catch (err) {
-    return { ok: false, error: offText(undefined, why(err)) }
-  }
-}
-
-let lanTimer: Timer | undefined
-let lanBusy = false
-
-// Static peers live in $.store, so they survive a restart; the sidecar hellos them over TCP every period.
-const STATIC_KEY = 'lanPeers'
-const readStatics = async ($: Engine): Promise<string[]> => {
-  const v = await $.store.get(STATIC_KEY)
-  return Array.isArray(v) ? v.map(String).filter(x => staticPeer(x) === x) : []
-}
-const pushStatics = async ($: Engine, hosts: string[]) => { try { await sidecarOf($)('static', { hosts }) } catch {} }
-
-/** /a2a lan add|remove: the stored list changed and handed to the sidecar. */
-async function lanStatic($: Engine, verb: string, arg: string): Promise<string> {
-  const was = await readStatics($)
-  if (verb === 'add') {
-    const spec = staticPeer(arg)
-    if (!spec) return `a2a lan: ${arg ? `${arg.slice(0, 80)} is not a host or host:port` : 'which host?'}.\n${STATIC_USAGE}`
-    const now = was.includes(spec) ? was : [...was, spec]
-    await $.store.set(STATIC_KEY, now)
-    await pushStatics($, now)
-    return `a2a lan: added ${spec}${spec.includes(':') ? '' : ' (ports 41400-41409)'}. This session hellos it over TCP every few seconds; it shows in /a2a lan once it answers.`
-  }
-  const host = arg.replace(/:\d+$/, '')
-  const now = was.filter(x => x.replace(/:\d+$/, '') !== host)
-  if (!host || now.length === was.length) return `a2a lan: ${host.slice(0, 80) || 'that'} is not a static peer added with /a2a lan add (those: ${was.join(', ') || 'none'}). Peers from the lanPeers option change with claude plugin configure.`
-  await $.store.set(STATIC_KEY, now)
-  await pushStatics($, now)
-  return `a2a lan: removed ${host}.`
-}
-
-// Drains the sidecar's inbox. Each message is a toast and a row in the pane, and together they are one
-// prompt, framed, never asUser: another agent wrote them, not the person.
-async function pollLan($: Engine, address: string): Promise<void> {
-  if (lanBusy) return
-  lanBusy = true
-  try {
-    const sc = sidecarOf($)
-    const [box, seen] = await Promise.all([sc('inbox'), sc('peers')])
-    const fresh = messagesOf(box.messages)
-    const peers = peersOf(seen.peers)
-    const was = await read($, lanView)
-    if (nextView(was, address, peers, fresh) !== was) await update($, lanView, v => nextView(v, address, peers, fresh))
-    for (const m of fresh) $.ui.toast(toastText(m))
-    if (fresh.length) $.prompt.submit({ text: fresh.map(framed).join('\n\n') }).catch(() => {})
-  } catch {
-    // A sidecar that went away is tried again on the next tick.
-  } finally {
-    lanBusy = false
-  }
-}
-
-// With the lan option false the sidecar opens no socket and nothing here runs, so the mod behaves as upstream's.
-async function startLan($: Engine): Promise<void> {
-  const { status } = await lanNow($)
-  const address = status?.configured ? status.address : ''
-  if ((await read($, lanView)).address !== address) await update($, lanView, v => ({ ...v, address }))
-  lanTimer?.cancel()
-  lanTimer = undefined
-  if (!address) return
-  const statics = await readStatics($)
-  if (statics.length) await pushStatics($, statics)
-  lanTimer = $.clock.every(POLL_LAN_MS, () => void pollLan($, address))
-  if (!(await $.tool.list()).some(t => t.name === 'SendFile')) await $.tool.register(SEND_FILE_TOOL)
-}
+// The workers as ListAgents and /list-agents list them: oldest first.
+const sortedWorkers = async (host: Host) => Object.values(await loadWorkers(host)).sort((a, b) => a.addedAt - b.addedAt)
 
 export const register: Register = (on, options) => {
   const settingTokens = parseTokens(options.tokens)
   const ui = parseSettings(options)
-  // LAN mode is on unless the lan option is false; on, a sidecar that is not there is worth a line in ListAgents.
-  const lanWanted = String(options.lan) !== 'false'
   // Not in $.state: a write per keystroke would redraw the pane under the person's typing.
   const drafts = new Map<string, string>()
   let paneExpiry: Timer | undefined
@@ -394,31 +283,11 @@ export const register: Register = (on, options) => {
     await resume(hostOf($, settingTokens, ui))
     // The engine keeps a pane open across reloads, so one opened under another layout would stay.
     if (ui.layout === 'minimal') try { await $.ui.close({ id: PANE.id }) } catch {}
-    if (lanWanted) try { await startLan($) } catch {}
     return next(e)
   })
 
   on('command.run', { command: 'a2a' }, async ($, e) => {
-    const [sub, verb, ...rest] = e.args.trim().split(/\s+/)
-    if (sub === 'lan' && (verb === 'add' || verb === 'remove')) return { text: await lanStatic($, verb, rest.join(' ')) }
-    if (sub === 'lan') {
-      const { status, peers, down } = await lanNow($)
-      if (!status?.configured) return { text: offText(status, down) }
-      const statics = Array.isArray(status.static) ? status.static.map(String).filter(x => staticPeer(x) === x) : []
-      return { text: [
-        modeLine(status.mode),
-        `This session is ${status.address}, listening on port ${status.port}.`,
-        ...(statics.length ? [`Static peers (hello over TCP every few seconds): ${statics.join(', ')}`] : []),
-        '',
-        peerSection(status.address, peers),
-        ...(peers.length ? [] : ['', NO_PEERS_HINT]),
-      ].join('\n') }
-    }
-    if (sub) {
-      const text = await runCommand(hostOf($, settingTokens, ui), e.args)
-      const lan = sub === 'list' ? await read($, lanView) : EMPTY_LAN
-      return { text: lan.address ? `${text}\n\n${peerSection(lan.address, lan.peers)}` : text }
-    }
+    if (e.args.trim()) return { text: await runCommand(hostOf($, settingTokens, ui), e.args) }
     // Only the person opens the pane, so a running task never switches the dock away from /diff.
     // Asked, it is placed at any width; another mod's ui.open hook may still deny it.
     if (ui.layout !== 'minimal') try { await $.ui.open({ ...PANE, columns: PANE_COLUMNS, rows: PANE_ROWS }) } catch {}
@@ -494,7 +363,7 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: 'a2a-workers' }, async ($, e) => {
     const host = hostOf($, settingTokens, ui)
     const now = await nowOf($)
-    const [workers, list, stored, durations, pal, lan] = await Promise.all([loadWorkers(host), readRecent(host), read($, paneView), host.readDurations(), paletteOf($), read($, lanView)])
+    const [workers, list, stored, durations, pal] = await Promise.all([loadWorkers(host), readRecent(host), read($, paneView), host.readDurations(), paletteOf($)])
     // State saved by an earlier version lacks the newer fields.
     const view: PaneView = { ...EMPTY_VIEW, ...stored }
     const act: PaneActions = {
@@ -534,68 +403,32 @@ export const register: Register = (on, options) => {
     const due = nextRedraw(aging, now, false)
     paneExpiry = due === undefined ? undefined : $.clock.after(due, () => $.ui.invalidate('ui.render'))
     const rows = aging.filter(t => isOpen(t) || (t.endedAt ?? t.startedAt) > view.clearedAt)
-    return paneTree($.ui.resolve(e), { surface: e.surface, width: e.props.bodyColumns, height: e.props.scroll.bodyRows, now, anim: ui.animations, pal, workers: shown, rows, durations, view, drafts, ...(lan.address ? { lan } : {}) }, act)
+    return paneTree($.ui.resolve(e), { surface: e.surface, width: e.props.bodyColumns, height: e.props.scroll.bodyRows, now, anim: ui.animations, pal, workers: shown, rows, durations, view, drafts }, act)
   })
 
   on('tool.call', { tool: 'mcp__a2a-mod__workers' }, async $ => {
     const all = Object.values(await loadWorkers(hostOf($, settingTokens, ui)))
-    const lan = await read($, lanView)
-    const text = all.length
-      ? all.map(w => `${w.alias}: ${w.name}. ${w.description}\n  skills: ${w.skills.map(s => `${s.id} (${s.description || s.name})`).join('; ') || 'none listed'}`).join('\n')
-      : 'No workers registered. Ask the user to run /a2a add <url>.'
-    return { result: lan.address ? `${text}\n\n${peerSection(lan.address, lan.peers)}` : text }
+    if (!all.length) return { result: 'No workers registered. Ask the user to run /a2a add <url>.' }
+    return { result: all.map(w => `${w.alias}: ${w.name}. ${w.description}\n  skills: ${w.skills.map(s => `${s.id} (${s.description || s.name})`).join('; ') || 'none listed'}`).join('\n') }
   })
 
-  // The sidecar's tools are the mod's own plumbing: the model draining the inbox would lose messages.
-  on('tool.check', { tool: ['mcp__plugin_a2a-mod_lan__status', 'mcp__plugin_a2a-mod_lan__peers', 'mcp__plugin_a2a-mod_lan__inbox', 'mcp__plugin_a2a-mod_lan__send', 'mcp__plugin_a2a-mod_lan__static'] },
-    (_$, _e, next) => (next.origin.plugin === 'a2a-mod' ? { decision: 'allow' } : { decision: 'deny', reason: SIDECAR_DENY }))
-
-  // The listing is the engine's; ours goes after it, and a sidecar that fails costs one line at most.
+  // The listing is the engine's; the registered workers go after it.
   on('tool.call', { tool: 'ListAgents' }, async ($, e, next) => {
     const out = await next(e)
     if (out.deny !== undefined || out.isError || typeof out.result?.listing !== 'string') return out
-    const workers = Object.values(await loadWorkers(hostOf($, settingTokens, ui))).sort((a, b) => a.addedAt - b.addedAt)
-    const lan = lanWanted ? await lanNow($) : { peers: [] }
-    const sections = agentSections(lan, workers)
-    if (!sections.length) return out
+    const section = workersSection(await sortedWorkers(hostOf($, settingTokens, ui)))
+    if (!section) return out
     // A fresh object: the one next gave carries core's ref, and core would send its own listing.
-    return { result: { ...out.result, listing: [out.result.listing, ...sections].join('\n\n') } }
-  })
-
-  // /list-agents (alias /peers) as the person reads it: the built-in's output, then the LAN agents. Never worse than the built-in's.
-  on('command.run', { command: 'list-agents' }, async ($, e, next) => {
-    const out = await next(e)
-    if (!lanWanted || typeof out.text !== 'string') return out
-    try {
-      const sections = agentSections(await lanNow($), [], NONE_SEEN_CMD)
-      // A fresh object: the one next gave carries core's ref, and core would print its own text.
-      return sections.length ? { text: [out.text, ...sections].join('\n\n'), ...(out.context ? { context: out.context } : {}) } : out
-    } catch {
-      return out
-    }
+    return { result: { ...out.result, listing: `${out.result.listing}\n\n${section}` } }
   })
 
   on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
     const to = typeof e.to === 'string' ? e.to : ''
-    if (!isA2a(to) && !isLan(to)) return next(e)
-    // The tool's structured messages (shutdown requests and the like) are for teammates, not peers.
+    if (!isA2a(to)) return next(e)
+    // The tool's structured messages (shutdown requests and the like) are for teammates, not workers.
     const message = typeof e.message === 'string' ? e.message : JSON.stringify(e.message)
-    if (isLan(to)) return { result: sentResult(to, await lanSend($, { to, text: message })) }
     const text = await sendTask($, hostOf($, settingTokens, ui), e.tool_use_id, next, { worker: to.slice('a2a:'.length), message })
     return { result: { success: !/^(a2a: |No worker)/.test(text), message: text } }
-  })
-
-  on('tool.call', { tool: 'SendFile' }, async ($, e, next) => {
-    if (!isLan(e.to)) return next(e)
-    return { result: sendFileResult(e.to, await lanSend($, { to: e.to, text: e.message ?? '', files: e.files })) }
-  })
-
-  on('tool.call', { tool: 'mcp__a2a-mod__send_file' }, async ($, e) => {
-    const input = e as unknown as { to?: unknown; files?: unknown; message?: unknown }
-    const to = String(input.to ?? '')
-    if (!isLan(to)) return { result: `a2a lan: send_file takes a lan:<name> address from ListAgents, not ${to || 'nothing'}.` }
-    const files = Array.isArray(input.files) ? input.files.map(String) : []
-    return { result: sendFileText(sendFileResult(to, await lanSend($, { to, text: String(input.message ?? ''), files }))) }
   })
 
   on('tool.call', { tool: 'mcp__a2a-mod__add_worker' }, async ($, e) =>

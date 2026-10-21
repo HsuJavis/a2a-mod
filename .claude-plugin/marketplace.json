@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "a2a-mod",
-  "description": "A2A protocol client for Claude Code, with a LAN mode (fork of NovusEdge/a2a-mod).",
+  "description": "A2A protocol client for Claude Code (fork of NovusEdge/a2a-mod).",
   "owner": {
     "name": "HsuJavis",
     "url": "https://github.com/HsuJavis"
@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "a2a-mod",
-      "description": "A2A protocol client for Claude Code: Claude hands tasks to non-Claude worker agents over Agent2Agent and picks up their results. LAN mode: Claude Code sessions on the same network find each other and exchange messages and files.",
+      "description": "A2A protocol client for Claude Code: Claude hands tasks to non-Claude worker agents over Agent2Agent and picks up their results. Registered workers show in ListAgents and take SendMessage as a2a:<alias>.",
       "source": "./",
       "category": "development"
     }

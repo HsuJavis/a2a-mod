@@ -90,22 +90,6 @@ export type PaneView = { open: string[]; replying: string[]; collapsed: string[]
 /** A reply the user sent from the pane, told to Claude with their next prompt. */
 export type SentReply = { worker: string; taskId: string; text: string }
 
-/** A Claude Code session the LAN sidecar discovered, by the address SendMessage takes (`lan:<name>`). */
-/** `via`: how the sidecar found it (multicast, broadcast, a hello it got, or a static peer it helloed). */
-export type LanPeer = { address: string; name: string; host: string; port: number; via?: string[] }
-
-/** One file a LAN message carried, as the sidecar saved it: `path` and `sha256` once downloaded, `error` when not. */
-export type LanFile = { name: string; path?: string; size?: number; sha256?: string; error?: string }
-
-/**
- * A message another session sent here. `from` is `lan:<name>`, or `a2a:<ip>` for any other A2A client;
- * `host` the IP it came from; `authenticated` true only when it carried the shared secret.
- */
-export type LanMessage = { from: string; host?: string; authenticated?: boolean; text: string; files: LanFile[]; receivedAt: number }
-
-/** LAN mode as the pane draws it: this session's address (empty while off), the peers seen, the last messages in. */
-export type LanView = { address: string; peers: LanPeer[]; received: LanMessage[] }
-
 declare module 'claude-code' {
   interface PluginState {
     'a2a-mod': {
@@ -116,7 +100,6 @@ declare module 'claude-code' {
       played: string[]
       pane: PaneView
       replies: SentReply[]
-      lan: LanView
     }
   }
 }
