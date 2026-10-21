@@ -422,6 +422,19 @@ export const register: Register = (on, options) => {
     return { result: { ...out.result, listing: `${out.result.listing}\n\n${section}` } }
   })
 
+  // /list-agents (alias /peers) as the person reads it: the built-in's output, then the registered workers. Never worse than the built-in's.
+  on('command.run', { command: 'list-agents' }, async ($, e, next) => {
+    const out = await next(e)
+    if (typeof out.text !== 'string') return out
+    try {
+      const section = workersSection(await sortedWorkers(hostOf($, settingTokens, ui)))
+      // A fresh object: the one next gave carries core's ref, and core would print its own text.
+      return section ? { text: `${out.text}\n\n${section}`, ...(out.context ? { context: out.context } : {}) } : out
+    } catch {
+      return out
+    }
+  })
+
   on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
     const to = typeof e.to === 'string' ? e.to : ''
     if (!isA2a(to)) return next(e)

@@ -1,6 +1,6 @@
 import { test, expect, mock, type Engine } from 'claude-code/testing'
 import { fixtures as f } from './fixtures.ts'
-import { fakeNet, STORE, WITH_TOKEN } from './kit.ts'
+import { fakeNet, STORE, WITH_TOKEN, type On } from './kit.ts'
 
 const NATIVE = 'Sessions on this machine:\n  main'
 const WORKERS = 'A2A workers (a2a-mod; SendMessage with to: "a2a:<alias>"):\n  a2a:fake  Fake Worker. test double'
@@ -46,4 +46,36 @@ test('SendMessage to anyone else is left to the engine', async ($, on) => {
   on('tool.call', { tool: 'SendMessage' }, async (_$, e) => ({ result: `engine sent to ${String(e.to)}` }))
   expect((await $.tool.call({ tool: 'SendMessage', to: 'main', message: 'hi' })).result).toBe('engine sent to main')
   expect(net.calls).toEqual([])
+})
+
+const NATIVE_CMD = 'Agents you can message:\n  main (this session)'
+const listAgentsCmd = async ($: Engine, on: On, native: () => unknown = () => ({ text: NATIVE_CMD, context: ['note for the model'] })) => {
+  on('command.run', { command: 'list-agents' }, async () => native() as never)
+  return $.command.run({ command: 'list-agents', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
+}
+
+test('/list-agents keeps the built-in’s output and adds the registered workers, in ListAgents’ words', async ($, on) => {
+  mock.store(on, STORE)
+  const out = await listAgentsCmd($, on)
+  expect(out.text).toBe(`${NATIVE_CMD}\n\n${WORKERS}`)
+  // The person typed it: the worker lines are for them, the model's notes are the built-in's own.
+  expect(out.context).toEqual(['note for the model'])
+})
+
+test('/list-agents with no workers is the built-in’s own', async ($, on) => {
+  mock.store(on)
+  const out = await listAgentsCmd($, on)
+  expect(out.text).toBe(NATIVE_CMD)
+  expect(out.context).toEqual(['note for the model'])
+})
+
+test('/list-agents keeps the built-in’s output when the workers cannot be read', async ($, on) => {
+  on('store.get', async () => { throw new Error('boom') })
+  expect((await listAgentsCmd($, on)).text).toBe(NATIVE_CMD)
+})
+
+test('/list-agents that printed nothing is left alone', async ($, on) => {
+  mock.store(on, STORE)
+  const out = await listAgentsCmd($, on, () => ({ context: ['x'] }))
+  expect(out.text).toBeUndefined()
 })
