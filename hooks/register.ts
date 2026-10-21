@@ -136,12 +136,10 @@ async function pollInbound($: Engine): Promise<void> {
   }
 }
 
-/** The server as the sidecar has it now, or why it could not be asked. Polling starts once it is on. */
+/** The server as the sidecar has it now, or why it could not be asked. */
 async function serverNow($: Engine): Promise<{ server?: ServerStatus; down?: string }> {
   try {
-    const server = statusOf(await sidecarOf($)('status'))
-    if (server.on && !inboundTimer) inboundTimer = $.clock.every(POLL_IN_MS, () => void pollInbound($))
-    return { server }
+    return { server: statusOf(await sidecarOf($)('status')) }
   } catch (err) {
     return { down: why(err) }
   }
@@ -393,7 +391,12 @@ export const register: Register = (on, options) => {
     const host = hostOf($, settingTokens, ui)
     await resume(host)
     await settleOrphan(scanEnvOf($, host, ui))
-    if (serverWanted) await serverNow($)
+    // Polled whatever the sidecar says now: one still starting is drained once it is up, and an
+    // inbox with the server off is empty.
+    if (serverWanted) {
+      inboundTimer?.cancel()
+      inboundTimer = $.clock.every(POLL_IN_MS, () => void pollInbound($))
+    }
     // The engine keeps a pane open across reloads, so one opened under another layout would stay.
     if (ui.layout === 'minimal') try { await $.ui.close({ id: PANE.id }) } catch {}
     try { if (!(await $.tool.list()).some(t => t.name === 'SendFile')) await $.tool.register(SEND_FILE_TOOL) } catch {}

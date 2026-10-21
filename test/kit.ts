@@ -331,8 +331,9 @@ export function fakeSidecar(on: On, opts: { status?: Record<string, unknown>; do
   const inbox: unknown[] = []
   const status: Record<string, unknown> = { ...SERVER_ON, ...opts.status }
   let scan: ScanProgress = { phase: 'idle', done: 0, total: 0, hits: [] }
+  let down = opts.down
   on('mcp.connect', async () => ({
-    value: opts.down ? { isConnected: false, reason: 'failed', message: opts.down } : { isConnected: true, server: 'plugin:a2a-mod:sidecar' },
+    value: down ? { isConnected: false, reason: 'failed', message: down } : { isConnected: true, server: 'plugin:a2a-mod:sidecar' },
   }))
   on('mcp.call', async (_$, e) => {
     calls.push({ tool: e.tool, args: e.args ?? {} })
@@ -358,6 +359,8 @@ export function fakeSidecar(on: On, opts: { status?: Record<string, unknown>; do
   })
   return {
     calls, inbox, status,
+    /** The sidecar goes down (a reason) or comes up (undefined). */
+    setDown: (why: string | undefined) => { down = why },
     tools: () => calls.map(c => c.tool),
     replies: () => calls.filter(c => c.tool === 'reply').map(c => c.args),
     scanStarts: () => calls.filter(c => c.tool === 'scan_start').map(c => c.args),

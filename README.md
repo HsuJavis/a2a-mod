@@ -103,7 +103,7 @@ Every Claude Code session with the mod serves its own A2A endpoint (the `server`
 
 **Files.** Inbound file parts may be inline bytes (`raw` / `bytes`) or URLs; a URL is downloaded only from the sender's own address, with no redirects, at most 64 MiB a file and 20 files a message. A reply's files are served by the replying session at an unguessable URL (`/files/<random>`, valid while the task is kept), which the asking side sees in the result. Claude Code sessions sending to each other send files inline (4 MiB a file, 10 MiB a send).
 
-**Ports.** The endpoint listens on all interfaces on the first free port in 41400-41499, so the first ten sessions on a host are what a default scan finds. `A2A_PORT` in Claude Code's environment pins a port or range (`A2A_PORT=41450` or `41450-41460`); there is no random fallback, and when no port is free the session has no endpoint and `/a2a` says why. The port can change when a session restarts, so a registered session may need `/a2a add` again.
+**Ports.** The endpoint listens on all interfaces on the first free port in 41400-41499, so the first ten sessions on a host are what a default scan finds. `A2A_PORT`, set in the environment Claude Code is started from (the sidecar inherits it), pins a port or range (`A2A_PORT=41450` or `41450-41460`); there is no random fallback, and when no port is free the session has no endpoint and `/a2a` says why. The port can change when a session restarts, so a registered session may need `/a2a add` again.
 
 **Firewall.** Inbound TCP on the port must be allowed on the receiving machine, for example on Ubuntu `sudo ufw allow from 192.168.1.0/24 to any port 41400:41499 proto tcp`; macOS asks once to let `node` accept incoming connections. Corporate networks, guest Wi-Fi and VPNs often block traffic between machines; then only sessions on the same machine (`127.0.0.1`) reach each other.
 
@@ -128,7 +128,7 @@ Every Claude Code session with the mod serves its own A2A endpoint (the `server`
 
 **檔案。** 進來的 file part 可以是內嵌位元組（`raw`／`bytes`）或 URL；URL 只從寄件者自己的位址下載、不跟隨轉址，每檔最多 64 MiB、每則最多 20 個檔。回覆裡的檔案由回覆的 session 以猜不到的網址提供（`/files/<亂數>`，task 保留期間有效），發問端會在結果裡看到。Claude session 之間互傳檔案是內嵌傳送（每檔 4 MiB、每次 10 MiB）。
 
-**Port。** 端點監聽所有網路介面，用 41400-41499 中第一個空的 port，所以一台主機前十個 session 就是預設掃描會找的範圍。在 Claude Code 的環境變數設 `A2A_PORT` 可以固定 port 或範圍（`A2A_PORT=41450` 或 `41450-41460`）；不會退而用隨機 port，沒有空 port 時這個 session 就沒有端點，`/a2a` 會說明原因。session 重開後 port 可能改變，登記過的 session 可能要重新 `/a2a add`。
+**Port。** 端點監聽所有網路介面，用 41400-41499 中第一個空的 port，所以一台主機前十個 session 就是預設掃描會找的範圍。在啟動 Claude Code 的環境設定 `A2A_PORT`（sidecar 會繼承）可以固定 port 或範圍（`A2A_PORT=41450` 或 `41450-41460`）；不會退而用隨機 port，沒有空 port 時這個 session 就沒有端點，`/a2a` 會說明原因。session 重開後 port 可能改變，登記過的 session 可能要重新 `/a2a add`。
 
 **防火牆。** 接收端機器必須允許該 port 的 TCP 連入，例如 Ubuntu：`sudo ufw allow from 192.168.1.0/24 to any port 41400:41499 proto tcp`；macOS 會詢問一次是否讓 `node` 接受連入。公司網路、訪客 Wi-Fi、VPN 常常擋掉機器之間的連線；那種情況下只有同一台機器上（`127.0.0.1`）的 session 互通。
 

@@ -37,6 +37,20 @@ test('a message in is a toast and one framed prompt, not the user’s words, wit
   expect(prompts.length).toBe(1)
 })
 
+test('a sidecar still starting when the session starts is drained once it is up', async ($, on) => {
+  mock.store(on)
+  const clock = mock.clock(on)
+  const prompts = promptLog(on)
+  const sc = fakeSidecar(on, { down: 'starting' })
+  await startSession($, on)
+  await clock.advance(POLL_IN_MS * 2)
+  sc.setDown(undefined)
+  sc.inbox.push(INBOUND)
+  await clock.advance(POLL_IN_MS)
+  expect(prompts.length).toBe(1)
+  expect(prompts[0]!.text).toContain('task task-1234-abcd')
+})
+
 test('a message sent with the serverToken says so; a follow-up says it answers the question', async ($, on) => {
   mock.store(on)
   const clock = mock.clock(on)
