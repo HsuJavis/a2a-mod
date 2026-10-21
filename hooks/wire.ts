@@ -7,7 +7,7 @@ export type Op = 'send' | 'get' | 'cancel'
 /** A file sent inline: its bytes as standard base64. */
 export type FileIn = { name: string; mediaType: string; base64: string }
 export type OpParams = { text: string; contextId?: string; taskId?: string; files?: FileIn[] } | { id: string }
-export type CardInfo = Pick<Worker, 'name' | 'description' | 'cardUrl' | 'endpoint' | 'version' | 'skills' | 'needsAuth' | 'organization'>
+export type CardInfo = Pick<Worker, 'name' | 'description' | 'cardUrl' | 'endpoint' | 'version' | 'skills' | 'needsAuth' | 'organization' | 'kind'>
 
 const METHODS: Record<ProtocolVersion, Record<Op, string>> = {
   '1.0': { send: 'SendMessage', get: 'GetTask', cancel: 'CancelTask' },
@@ -33,7 +33,9 @@ export function parseCard(raw: unknown, cardUrl: string): CardInfo {
   const needsAuth = some(card.securityRequirements) || some(card.security)
   // The organization is drawn in the tool card, where one control character blanks the whole tree.
   const org = typeof card.provider?.organization === 'string' ? printable(card.provider.organization).slice(0, ORG_MAX) : ''
-  const base = { name: card.name, description: String(card.description ?? ''), cardUrl, skills, needsAuth, ...(org ? { organization: org } : {}) }
+  // An a2a-mod sidecar's card: a Claude Code session, not a worker.
+  const session = card.a2aMod?.kind === 'claude-session'
+  const base = { name: card.name, description: String(card.description ?? ''), cardUrl, skills, needsAuth, ...(org ? { organization: org } : {}), ...(session ? { kind: 'claude-session' as const } : {}) }
   const ifaces: Json[] = Array.isArray(card.supportedInterfaces) ? card.supportedInterfaces : []
   const jsonrpc = (major: string) => ifaces.find(i => i.protocolBinding === 'JSONRPC' && String(i.protocolVersion).startsWith(major))
   const v1 = jsonrpc('1.')

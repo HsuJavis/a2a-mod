@@ -25,6 +25,8 @@ export type Worker = {
   trustedOrigin?: string
   /** The card's `provider.organization`. */
   organization?: string
+  /** `claude-session`: another Claude Code session's a2a-mod endpoint, not a worker. */
+  kind?: 'claude-session'
   addedAt: number
 }
 
