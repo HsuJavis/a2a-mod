@@ -101,7 +101,8 @@ function scanEnvOf($: Engine, host: Host, ui: UiSettings): ScanEnv {
       if (text !== undefined) $.ui.status(text)
       else void showStatus(host)
     },
-    log: text => $.ui.log(text),
+    // A log entry is one transcript line: a newline in it draws as a stray glyph.
+    log: text => { for (const line of text.split('\n')) $.ui.log(line) },
     open: async () => { if (ui.layout !== 'minimal') try { await $.ui.open(SCAN_PANE) } catch {} },
     toast: text => $.ui.toast(text),
   }
