@@ -14,7 +14,7 @@
 
 </div>
 
-> **This is HsuJavis's fork of [NovusEdge/a2a-mod](https://github.com/NovusEdge/a2a-mod)** by Aliasgar Khimani (MIT). It puts your registered workers into Claude Code's own agent tools: [`ListAgents`, `SendMessage`, `SendFile` and `/list-agents`](#workers-in-claude-codes-agent-tools) show and reach them as `a2a:<alias>`. Everything else is upstream's. The LAN mode of 0.4.0-0.6.1 was removed in 0.7.0: for Claude Code sessions on other machines, use Claude Code's built-in Remote Control.
+> **This is HsuJavis's fork of [NovusEdge/a2a-mod](https://github.com/NovusEdge/a2a-mod)** by Aliasgar Khimani (MIT). It puts your registered workers into Claude Code's own agent tools: [`ListAgents`, `SendMessage`, `SendFile` and `/list-agents`](#workers-in-claude-codes-agent-tools) show and reach them as `a2a:<alias>`, and [`/a2a scan`](#find-workers-on-your-network) finds workers on a private network. Everything else is upstream's. The LAN mode of 0.4.0-0.6.1 was removed in 0.7.0: for Claude Code sessions on other machines, use Claude Code's built-in Remote Control.
 
 ## Why
 
@@ -90,6 +90,54 @@ Pick `full`, `pane` or `minimal` in `/config` to show more or less. [The UI](htt
 ```
 
 The token is read from a command, a file or a setting, and never typed into Claude. [Worker tokens](https://a2a.khimani.dev/tokens) covers all three. You can also just ask Claude to add a worker; it shows a dialog, and nothing is added until you approve it.
+
+## Find workers on your network
+
+When you do not know a worker's URL, scan for it:
+
+```
+/a2a scan 192.168.1.0/24
+/a2a scan 10.0.0.0/16 --ports 8000,9000-9010
+/a2a scan 10.0.0.20-10.0.0.60 --https
+```
+
+The scan asks every address in the target for `/.well-known/agent-card.json` on each port, and lists the Agent Cards that answer: name, URL, A2A version and skills. It runs in the background. Progress (probes done of the total, percent, workers found, elapsed time and an estimate of what is left) shows on the status line and in the **A2A scan** pane, which opens when the scan starts; **Stop** there or `/a2a scan stop` ends it. One scan runs at a time. `/a2a scan` on its own says where the scan is, or what it found.
+
+When it ends, tick the workers you want in the pane and press **Add selected**. They are added just as `/a2a add` adds them, each under its card name as the alias (`fake-worker`, then `fake-worker-2` if that is taken), with its token from the tokens setting. The same list is printed in the transcript with an `/a2a add <url> <alias>` line for each, for surfaces without the pane. **Nothing is added until you choose it.** An endpoint you already registered is marked `already added` and not offered again (it is matched by its card URL, so a worker you added by host name is not recognised under its IP).
+
+- **Targets**: an IPv4 CIDR up to a /16, one address, or a range `a.b.c.d-e.f.g.h` (at most 65,536 addresses, inside one block). Only private addresses: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 (CGNAT, Tailscale), 169.254.0.0/16 and 127.0.0.0/8. Anything else is refused, and so is anything wider than a /16. The network and broadcast addresses of a /30 or wider are skipped.
+- **Ports**: 80, 443, 8000, 8080 and 41241 by default; `--ports` replaces them with a list such as `8000,9000-9010` (1-65535). https is used on 443 and http elsewhere; `--https` tries https on every port. One scan makes at most 524,288 probes (a /16 on 8 ports).
+- **Pace**: 128 probes at once, each given 1 s. Progress updates at most 4 times a second. A mod cannot cancel a request it made, so a probe that gives up leaves the host's request running to its own 30 s timeout; the scan keeps at most 192 of those unsettled at once (under the 256 simultaneous fetches Bun allows by default), and waits when it reaches that.
+- **How long**: a /24 on the 5 default ports is 1,270 probes: about 20 s when most addresses are empty, about 3.5 minutes at worst. A /16 on 5 ports is 327,670 probes: a few minutes when the addresses answer or refuse at once, about 85 minutes when most addresses are empty on your own subnet (the host gives up on each after about 3 s, so 192 in flight is about 64 probes a second), and up to about 14 hours when the network silently drops them (each held for the host's 30 s). Scan the smallest range you can.
+- Only `/.well-known/agent-card.json` is asked for; a worker that serves only the older `/.well-known/agent.json` is not found.
+- **Claude Code sessions are not found by a scan.** They serve no A2A endpoint (the LAN mode that gave them one was removed in 0.7.0); use Claude Code's Remote Control for those.
+- Claude has no scan tool: a sweep of the network is something you start yourself.
+
+**Network etiquette.** A scan is many connections to many machines in a short time. Corporate networks, hotel and campus Wi-Fi and cloud VPCs often watch for exactly that, and an intrusion detection system may flag or block your machine. Scan only networks you own or are allowed to scan. The cards that answer are their servers' own text: the mod strips control characters from them, but read a card before you add it.
+
+### 在網路上找 worker（繁體中文）
+
+不知道 worker 的網址時，可以掃描：
+
+```
+/a2a scan 192.168.1.0/24
+/a2a scan 10.0.0.0/16 --ports 8000,9000-9010
+/a2a scan 10.0.0.20-10.0.0.60 --https
+```
+
+掃描會對目標裡每個位址的每個 port 要 `/.well-known/agent-card.json`，列出有回應的 Agent Card：名稱、網址、A2A 版本與技能。掃描在背景執行。進度（已探測數／總數、百分比、找到幾個、已花時間、預估剩餘時間）顯示在狀態列和掃描開始時打開的 **A2A scan** 面板；按面板上的 **Stop** 或輸入 `/a2a scan stop` 可中止。同時只能跑一個掃描。單打 `/a2a scan` 會顯示目前進度或掃描結果。
+
+掃完後在面板勾選要加入的 worker，按 **Add selected**。加入方式和 `/a2a add` 完全相同：別名預設取卡片名稱（`fake-worker`，被佔用時改成 `fake-worker-2`），token 來自 tokens 設定。同一份清單也會印在對話紀錄裡，每個附一行 `/a2a add <url> <alias>`，給沒有面板的介面用。**你沒選的，一個都不會加入。** 已登記過的端點會標成 `already added`，不再列為可加入（以卡片網址比對，所以用主機名稱登記的 worker 在 IP 下認不出來）。
+
+- **目標**：IPv4 CIDR（最大 /16）、單一位址，或範圍 `a.b.c.d-e.f.g.h`（最多 65,536 個位址，且須在同一個區塊內）。只接受私有位址：10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、100.64.0.0/10（CGNAT、Tailscale）、169.254.0.0/16 和 127.0.0.0/8；其他一律拒絕，比 /16 大的也拒絕。/30 以上的網段會跳過網路位址和廣播位址。
+- **Port**：預設 80、443、8000、8080、41241；`--ports` 可換成 `8000,9000-9010` 這類清單（1-65535）。443 用 https，其他用 http；`--https` 則每個 port 都用 https。一次掃描最多 524,288 次探測（/16 乘 8 個 port）。
+- **速度**：同時 128 個探測，每個等 1 秒。進度每秒最多更新 4 次。mod 無法取消自己發出的請求，探測放棄後主機端的請求仍會跑到它自己的 30 秒逾時；掃描最多同時留 192 個這種未結束的請求（低於 Bun 預設的 256 個同時 fetch 上限），到了就等。
+- **要多久**：/24 掃 5 個預設 port 是 1,270 次探測：大多是空位址時約 20 秒，最差約 3.5 分鐘。/16 掃 5 個 port 是 327,670 次：位址會立刻回應或拒絕時幾分鐘；同網段大多是空位址時約 85 分鐘（主機約 3 秒放棄一個，192 個同時進行約每秒 64 次）；網路默默丟棄封包時最久約 14 小時（每個都卡滿主機的 30 秒）。範圍能多小就多小。
+- 只要 `/.well-known/agent-card.json`；只提供舊版 `/.well-known/agent.json` 的 worker 掃不到。
+- **掃描找不到 Claude Code session。** 它們沒有 A2A 端點（提供端點的 LAN 模式已在 0.7.0 移除）；要連 Claude Code session 請用 Claude Code 的 Remote Control。
+- Claude 沒有掃描工具：掃網路這件事由你自己發動。
+
+**網路禮儀。** 掃描是在短時間內連很多台機器。公司網路、飯店與校園 Wi-Fi、雲端 VPC 常常專門偵測這種行為，入侵偵測系統可能會標記或封鎖你的機器。只掃你擁有或被允許掃描的網路。回應的卡片是對方伺服器自己的文字：mod 會去掉控制字元，但加入前還是先看一下卡片內容。
 
 ## Workers in Claude Code's agent tools
 

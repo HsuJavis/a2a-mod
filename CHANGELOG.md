@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-21
+
+### Added
+
+- `/a2a scan <target> [--ports <list>] [--https]` finds A2A workers on a private network: it asks every address and port for `/.well-known/agent-card.json` (through the same discovery as `/a2a add`) and lists the cards that answer. Targets are an IPv4 CIDR up to a /16, one address or a range `a.b.c.d-e.f.g.h`, inside 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16 or 127/8 only; network and broadcast addresses of a /30 or wider are skipped. Ports default to 80, 443, 8000, 8080 and 41241 (https on 443; `--https` everywhere); at most 524,288 probes a scan.
+- The scan runs in the background, 128 probes at once with 1 s each and at most 192 host requests unsettled. Progress (done/total, percent, found, elapsed, ETA) shows on the status line and in a new **A2A scan** pane, at most 4 times a second; **Stop** or `/a2a scan stop` cancels it, and one scan runs at a time. `/a2a scan` alone prints where it is or what it found.
+- In the scan pane the person ticks the workers to add and presses **Add selected**: the same Worker record as `/a2a add`, the card name's slug as the alias (suffixed `-2`, `-3` when taken or held by the tokens setting), the token from the tokens setting. The result list is also printed with an `/a2a add <url> <alias>` line per worker. Endpoints already registered are marked `already added`. Nothing is added without the person's choice, and Claude gets no scan tool.
+
+
 ## [0.7.0] - 2026-10-21
 
 ### Added

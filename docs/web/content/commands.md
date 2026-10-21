@@ -16,8 +16,12 @@ Run `/a2a` with no arguments to open the workers pane and print the usage text. 
 | `/a2a add <url> [alias] [token flag]` | Fetch the worker's Agent Card and register it. The alias defaults to a slug of the card name. Run it again to refresh a worker. |
 | `/a2a list` | Show registered workers, their skills, and running tasks with their age. |
 | `/a2a remove <alias>` | Forget a worker, its running tasks and its run-time history. |
+| `/a2a scan <target> [--ports <list>] [--https]` | Look for workers on a private network (a CIDR up to /16, one IP, or a range) and list the Agent Cards that answer. Progress shows in the A2A scan pane and on the status line; tick the ones to add there. Nothing is added until you choose. |
+| `/a2a scan` / `/a2a scan stop` | Where the scan is or what it found; cancel it. |
 
 `<url>` can be the worker's base URL or the URL of its Agent Card. If it ends in `.json`, the mod fetches it as the card. Otherwise it fetches `/.well-known/agent-card.json` from that host.
+
+`/a2a scan` takes private addresses only (10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, 127/8), probes ports 80, 443, 8000, 8080 and 41241 unless `--ports` says otherwise, and runs 128 probes at once, 1 s each. The README's [Find workers on your network](https://github.com/HsuJavis/a2a-mod#find-workers-on-your-network) has the limits and timings. Scan only networks you are allowed to scan. Claude Code sessions are not found: they serve no A2A endpoint.
 
 A worker that needs a bearer token takes one token flag on `add`. [Worker tokens](/tokens) lists the flags and explains where each one reads the token from.
 
