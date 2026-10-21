@@ -306,3 +306,77 @@ export async function startSession($: Engine, on: On): Promise<string[]> {
   await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
   return tools
 }
+
+/** The sidecar's status while its server runs: open mode, one LAN address. */
+export const SERVER_ON = {
+  on: true, version: '0.9.0', id: 'self-id', name: 'here/proj', port: 41400, auth: 'open', url: 'http://192.168.1.5:41400',
+  urls: ['http://192.168.1.5:41400', 'http://127.0.0.1:41400'], open: 0, total: 0, tasks: [] as unknown[],
+}
+
+/** One message as the sidecar's inbox hands it over. */
+export const INBOUND = {
+  taskId: 'task-1234-abcd', contextId: 'ctx-1', from: '192.168.1.7', authenticated: false, followUp: false,
+  text: 'What is the build status?', files: [] as unknown[], receivedAt: 5,
+}
+
+type ScanProgress = { phase: string; done: number; total: number; open?: number; hits: unknown[]; startedAt?: number; at?: number }
+
+/**
+ * The sidecar over $.mcp, in memory: status, inbox, reply and the scan tools. `down` makes
+ * $.mcp.connect fail. The scan moves only when the test says so (`scanTo`).
+ */
+export function fakeSidecar(on: On, opts: { status?: Record<string, unknown>; down?: string; cwd?: string; reply?: (args: Record<string, unknown>) => unknown } = {}) {
+  on('session.cwd', async () => ({ value: opts.cwd ?? '/work' }))
+  const calls: { tool: string; args: Record<string, unknown> }[] = []
+  const inbox: unknown[] = []
+  const status: Record<string, unknown> = { ...SERVER_ON, ...opts.status }
+  let scan: ScanProgress = { phase: 'idle', done: 0, total: 0, hits: [] }
+  on('mcp.connect', async () => ({
+    value: opts.down ? { isConnected: false, reason: 'failed', message: opts.down } : { isConnected: true, server: 'plugin:a2a-mod:sidecar' },
+  }))
+  on('mcp.call', async (_$, e) => {
+    calls.push({ tool: e.tool, args: e.args ?? {} })
+    const a = e.args ?? {}
+    let out: unknown
+    switch (e.tool) {
+      case 'status': out = status; break
+      case 'inbox': out = { messages: inbox.splice(0) }; break
+      case 'reply': out = opts.reply?.(a) ?? { ok: true, taskId: a.taskId, state: a.ask ? 'input-required' : 'completed', files: [] }; break
+      case 'scan_start':
+        if (scan.phase === 'running') { out = { ok: false, error: 'a scan is already running' }; break }
+        scan = { phase: 'running', done: 0, total: Array.isArray(a.ports) ? a.ports.length * (ipCount(String(a.first), String(a.last))) : 0, hits: [], startedAt: 0, at: 0 }
+        out = { ok: true, total: scan.total, timeoutMs: 300, concurrency: 512 }
+        break
+      case 'scan_progress': out = scan; break
+      case 'scan_stop':
+        out = scan.phase === 'running' ? { ok: true, phase: 'stopped', done: scan.done } : { ok: false, phase: scan.phase, error: 'no scan is running' }
+        if (scan.phase === 'running') scan = { ...scan, phase: 'stopped' }
+        break
+      default: out = { error: `unknown tool ${e.tool}` }
+    }
+    return { value: { content: [{ type: 'text', text: JSON.stringify(out) }], isError: false, structuredContent: out } }
+  })
+  return {
+    calls, inbox, status,
+    tools: () => calls.map(c => c.tool),
+    replies: () => calls.filter(c => c.tool === 'reply').map(c => c.args),
+    scanStarts: () => calls.filter(c => c.tool === 'scan_start').map(c => c.args),
+    /** Moves the scan: `done` defaults to all of it when the phase is done. */
+    scanTo: (s: Partial<ScanProgress>) => { scan = { ...scan, ...s, ...(s.phase === 'done' && s.done === undefined ? { done: scan.total } : {}) } },
+  }
+}
+
+const ipNum = (s: string) => s.split('.').reduce((n, p) => n * 256 + Number(p), 0)
+const ipCount = (first: string, last: string) => ipNum(last) - ipNum(first) + 1
+
+/** A hit as the sidecar's scan_progress hands it over: the card JSON as served. */
+export const scanHit = (url: string, card: Record<string, unknown>) => ({ url, cardUrl: `${url}/.well-known/agent-card.json`, card })
+
+/** A Claude Code session's card, as the sidecar serves it. */
+export const sessionCard = (name: string, url: string, id = `id-${name}`) => ({
+  name, description: `Claude Code session ${name} (a2a-mod 0.9.0).`, version: '0.9.0',
+  supportedInterfaces: [{ url: `${url}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0', tenant: '' }, { url: `${url}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '0.3', tenant: '' }],
+  skills: [{ id: 'claude-session', name: 'Claude Code session', description: 'Ask this session.' }],
+  securitySchemes: {}, securityRequirements: [],
+  a2aMod: { kind: 'claude-session', name, id, version: '0.9.0', auth: 'open' },
+})

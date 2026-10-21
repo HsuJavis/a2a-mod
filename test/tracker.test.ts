@@ -165,3 +165,22 @@ test('a hung worker times out per poll, does not hold up other tasks, and is dro
   expect(wakes.at(-1)).toContain('lost contact')
   expect(wakes.length).toBe(2)
 })
+
+test('a task a Claude session works on for half an hour stays tracked, then wakes Claude once', { ...WITH_TOKEN, timeoutMs: 120_000 }, async ($, on) => {
+  mock.store(on, STORE)
+  on('ui.status', async () => ({ value: undefined }))
+  const clock = mock.clock(on)
+  const woke = prompts(on)
+  let done = false
+  let polls = 0
+  fakeNet(on, { send: f.v1_send_slow, get: () => { polls++; return done ? f.v1_get_completed : f.v1_get_working } })
+  expect(await sendSlow($, clock, 'think hard')).toContain('You will get a message')
+  for (let m = 0; m < 30; m++) await clock.advance(60_000)
+  expect(woke).toEqual([])
+  expect(polls).toBeGreaterThan(300)
+  expect((await runA2a($, 'list')).text).toContain('Running:')
+  done = true
+  await clock.advance(5000)
+  expect(woke.length).toBe(1)
+  expect(woke[0]).toContain('completed')
+})
