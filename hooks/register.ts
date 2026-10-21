@@ -1,10 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer, UiCopyResult } from 'claude-code'
 import type { PaneView, RecentState, RecentTask, ScanState, SentReply, Worker } from '../types/index.d.ts'
-import { isA2a, readFiles, sendFileText, sentOk, workersSection, type SendFileOut } from './agents.ts'
+import { agentSections, isA2a, readFiles, sendFileText, sentOk, type SendFileOut } from './agents.ts'
 import { A2AError, cancelTask, getTask, send } from './client.ts'
 import { runCommand, USAGE } from './command.ts'
 import { describeOutcome, FULL_MAX, wakeDetail, wakeLine } from './format.ts'
+import { downText, framed, isTaskAddr, messagesOf, POLL_IN_MS, replyText, resultOf, SIDECAR, SIDECAR_DENY, SIDECAR_TOOL_NAMES, SidecarDown, statusOf, statusText, taskAddr, toastText, type ServerStatus, type Sidecar } from './inbound.ts'
 import { addWorkerTool, removeWorkerTool, type Confirm } from './manage.ts'
 import { changeRecent, isOpen, isWaiting, noteCall, noteSent, noteState, readRecent, visible } from './recent.ts'
 import { loadWorkers, noteFailure, own, parseTokens, splitArgs, targetOf, workerOr, type Host, type SettingTokens } from './registry.ts'
@@ -92,9 +93,8 @@ function hostOf($: Engine, settingTokens: SettingTokens, ui: UiSettings): Host {
 
 function scanEnvOf($: Engine, host: Host, ui: UiSettings): ScanEnv {
   return {
-    fetch: host.fetch,
-    sleep: (ms, signal) => $.clock.sleep(ms, signal ? { signal } : undefined),
-    later: fn => { $.clock.after(1, () => void fn()) },
+    sidecar: sidecarOf($),
+    every: (ms, fn) => $.clock.every(ms, fn),
     read: () => read($, scanAtom),
     write: async change => { await update($, scanAtom, change) },
     status: text => {
@@ -104,6 +104,58 @@ function scanEnvOf($: Engine, host: Host, ui: UiSettings): ScanEnv {
     log: text => $.ui.log(text),
     open: async () => { if (ui.layout !== 'minimal') try { await $.ui.open(SCAN_PANE) } catch {} },
     toast: text => $.ui.toast(text),
+  }
+}
+
+// The loader refuses $ passed across an import, so the sidecar's calls are built here.
+const sidecarOf = ($: Engine): Sidecar => async (tool, args = {}) => {
+  let c: Awaited<ReturnType<Engine['mcp']['connect']>>
+  try { c = await $.mcp.connect(SIDECAR) } catch (err) { throw new SidecarDown(err instanceof Error ? err.message : String(err)) }
+  if (!c.isConnected) throw new SidecarDown(c.message)
+  return resultOf(await $.mcp.call(c.server, tool, args))
+}
+
+const why = (err: unknown) => (err instanceof Error ? err.message : String(err))
+
+let inboundTimer: Timer | undefined
+let inboundBusy = false
+
+// Drains the sidecar's inbox. Each message is a toast, and together they are one prompt, framed,
+// never asUser: another agent wrote them, not the person.
+async function pollInbound($: Engine): Promise<void> {
+  if (inboundBusy) return
+  inboundBusy = true
+  try {
+    const fresh = messagesOf((await sidecarOf($)('inbox')).messages)
+    for (const m of fresh) $.ui.toast(toastText(m))
+    if (fresh.length) $.prompt.submit({ text: fresh.map(framed).join('\n\n') }).catch(() => {})
+  } catch {
+    // A sidecar that went away is tried again on the next tick.
+  } finally {
+    inboundBusy = false
+  }
+}
+
+/** The server as the sidecar has it now, or why it could not be asked. Polling starts once it is on. */
+async function serverNow($: Engine): Promise<{ server?: ServerStatus; down?: string }> {
+  try {
+    const server = statusOf(await sidecarOf($)('status'))
+    if (server.on && !inboundTimer) inboundTimer = $.clock.every(POLL_IN_MS, () => void pollInbound($))
+    return { server }
+  } catch (err) {
+    return { down: why(err) }
+  }
+}
+
+/** Claude's answer to an A2A task: SendMessage's or SendFile's to a2a-task:<id>. Relative paths are the session's. */
+async function replyTask($: Engine, to: string, text: string, files?: string[]): Promise<{ success: boolean; message: string; files?: unknown[] }> {
+  const { taskId, ask } = taskAddr(to)
+  try {
+    const args = files ? { taskId, text, files, cwd: await $.session.cwd() } : { taskId, text, ...(ask ? { ask: true } : {}) }
+    const out = await sidecarOf($)('reply', args)
+    return { ...replyText(out), ...(files ? { files: Array.isArray(out.files) ? out.files : [] } : {}) }
+  } catch (err) {
+    return { success: false, message: `a2a: ${downText(why(err))}`, ...(files ? { files: files.map(path => ({ path, error: 'not sent' })) } : {}) }
   }
 }
 
@@ -154,11 +206,11 @@ const TOOLS = [
 // Registered where this build has no SendFile tool of its own.
 const SEND_FILE_TOOL = {
   name: 'send_file',
-  description: 'Send files, with an optional message, to a registered A2A worker (an a2a:<alias> address from ListAgents). They go inline, as file parts: 4 MiB a file, 10 MiB in all.',
+  description: 'Send files, with an optional message, to a registered A2A worker or Claude Code session (an a2a:<alias> address from ListAgents), or with your reply to an A2A task (a2a-task:<id>). To a worker they go inline: 4 MiB a file, 10 MiB in all.',
   inputSchema: {
     type: 'object',
     properties: {
-      to: { type: 'string', description: 'a2a:<alias> from ListAgents' },
+      to: { type: 'string', description: 'a2a:<alias> from ListAgents, or a2a-task:<id> to reply' },
       files: { type: 'array', items: { type: 'string' }, description: 'Paths, absolute or relative to the working directory' },
       message: { type: 'string' },
     },
@@ -317,7 +369,15 @@ async function sendFiles($: Engine, host: Host, callId: string, limit: Deadline,
 // The workers as ListAgents and /list-agents list them: oldest first.
 const sortedWorkers = async (host: Host) => Object.values(await loadWorkers(host)).sort((a, b) => a.addedAt - b.addedAt)
 
+// What ListAgents and /list-agents gain: this session's endpoint, the sessions and workers, the waiting tasks.
+async function listingSections($: Engine, host: Host, serverWanted: boolean): Promise<string[]> {
+  const workers = await sortedWorkers(host)
+  return agentSections(workers, serverWanted ? (await serverNow($)).server : undefined)
+}
+
 export const register: Register = (on, options) => {
+  // The endpoint is on unless the server option is false.
+  const serverWanted = String(options.server) !== 'false'
   const settingTokens = parseTokens(options.tokens)
   const ui = parseSettings(options)
   // Not in $.state: a write per keystroke would redraw the pane under the person's typing.
@@ -328,11 +388,12 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await Promise.all([
       ...TOOLS.map(t => $.tool.register(t)),
-      $.command.register({ name: 'a2a', description: 'Manage A2A worker agents', argumentHint: 'add <url> [alias] [--token-setting | --token-cmd "<cmd>" | --token-file <path>] | list | remove <alias> | scan <cidr> [--ports <list>] | scan stop' }),
+      $.command.register({ name: 'a2a', description: 'This session\'s A2A endpoint, and the A2A workers and Claude Code sessions it talks to', argumentHint: 'add <url> [alias] [--token-setting | --token-cmd "<cmd>" | --token-file <path>] | list | remove <alias> | scan <cidr> [--ports <list>] | scan stop' }),
     ])
     const host = hostOf($, settingTokens, ui)
     await resume(host)
     await settleOrphan(scanEnvOf($, host, ui))
+    if (serverWanted) await serverNow($)
     // The engine keeps a pane open across reloads, so one opened under another layout would stay.
     if (ui.layout === 'minimal') try { await $.ui.close({ id: PANE.id }) } catch {}
     try { if (!(await $.tool.list()).some(t => t.name === 'SendFile')) await $.tool.register(SEND_FILE_TOOL) } catch {}
@@ -353,7 +414,9 @@ export const register: Register = (on, options) => {
     // Only the person opens the pane, so a running task never switches the dock away from /diff.
     // Asked, it is placed at any width; another mod's ui.open hook may still deny it.
     if (ui.layout !== 'minimal') try { await $.ui.open({ ...PANE, columns: PANE_COLUMNS, rows: PANE_ROWS }) } catch {}
-    return { text: USAGE }
+    const { server, down } = serverWanted ? await serverNow($) : { server: undefined, down: undefined }
+    const head = serverWanted ? statusText(server, down) : 'a2a: this session has no A2A endpoint: the server setting is off.'
+    return { text: `${head}\n\n${USAGE}` }
   })
 
   on('prompt.submit', async ($, e, next) => {
@@ -476,7 +539,7 @@ export const register: Register = (on, options) => {
       width: e.props.bodyColumns, height: e.props.scroll.bodyRows, state, running: isScanning(),
       aliases: aliasesFor(state?.hits ?? [], Object.keys(workers), settingTokens.map),
     }, {
-      stop: stopScan,
+      stop: () => void stopScan(env, host),
       toggle: url => void togglePick(env, url),
       add: () => addPicked(env, host),
     })
@@ -488,14 +551,18 @@ export const register: Register = (on, options) => {
     return { result: all.map(w => `${w.alias}: ${w.name}. ${w.description}\n  skills: ${w.skills.map(s => `${s.id} (${s.description || s.name})`).join('; ') || 'none listed'}`).join('\n') }
   })
 
-  // The listing is the engine's; the registered workers go after it.
+  // The sidecar's tools are the mod's own plumbing: the model draining the inbox would lose messages.
+  on('tool.check', { tool: SIDECAR_TOOL_NAMES },
+    (_$, _e, next) => (next.origin.plugin === 'a2a-mod' ? { decision: 'allow' } : { decision: 'deny', reason: SIDECAR_DENY }))
+
+  // The listing is the engine's; ours goes after it.
   on('tool.call', { tool: 'ListAgents' }, async ($, e, next) => {
     const out = await next(e)
     if (out.deny !== undefined || out.isError || typeof out.result?.listing !== 'string') return out
-    const section = workersSection(await sortedWorkers(hostOf($, settingTokens, ui)))
-    if (!section) return out
+    const added = await listingSections($, hostOf($, settingTokens, ui), serverWanted)
+    if (!added.length) return out
     // A fresh object: the one next gave carries core's ref, and core would send its own listing.
-    return { result: { ...out.result, listing: `${out.result.listing}\n\n${section}` } }
+    return { result: { ...out.result, listing: [out.result.listing, ...added].join('\n\n') } }
   })
 
   // /list-agents (alias /peers) as the person reads it: the built-in's output, then the registered workers. Never worse than the built-in's.
@@ -503,9 +570,9 @@ export const register: Register = (on, options) => {
     const out = await next(e)
     if (typeof out.text !== 'string') return out
     try {
-      const section = workersSection(await sortedWorkers(hostOf($, settingTokens, ui)))
+      const added = await listingSections($, hostOf($, settingTokens, ui), serverWanted)
       // A fresh object: the one next gave carries core's ref, and core would print its own text.
-      return section ? { text: `${out.text}\n\n${section}`, ...(out.context ? { context: out.context } : {}) } : out
+      return added.length ? { text: [out.text, ...added].join('\n\n'), ...(out.context ? { context: out.context } : {}) } : out
     } catch {
       return out
     }
@@ -513,14 +580,16 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
     const to = typeof e.to === 'string' ? e.to : ''
-    if (!isA2a(to)) return next(e)
+    if (!isA2a(to) && !isTaskAddr(to)) return next(e)
     // The tool's structured messages (shutdown requests and the like) are for teammates, not workers.
     const message = typeof e.message === 'string' ? e.message : JSON.stringify(e.message)
+    if (isTaskAddr(to)) return { result: await replyTask($, to, message) }
     const text = await sendTask($, hostOf($, settingTokens, ui), e.tool_use_id, next, { worker: to.slice('a2a:'.length), message })
     return { result: { success: sentOk(text), message: text } }
   })
 
   on('tool.call', { tool: 'SendFile' }, async ($, e, next) => {
+    if (isTaskAddr(e.to)) return { result: (await replyTask($, String(e.to), e.message ?? '', e.files)) as SendFileOut }
     if (!isA2a(e.to)) return next(e)
     return { result: await sendFiles($, hostOf($, settingTokens, ui), e.tool_use_id, next, e.to, e.files, e.message ?? '') }
   })
@@ -528,8 +597,9 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'mcp__a2a-mod__send_file' }, async ($, e, next) => {
     const input = e as unknown as { to?: unknown; files?: unknown; message?: unknown }
     const to = String(input.to ?? '')
-    if (!isA2a(to)) return { result: `a2a: send_file takes an a2a:<alias> worker from ListAgents, not ${to.slice(0, 80) || 'nothing'}.` }
     const files = Array.isArray(input.files) ? input.files.map(String) : []
+    if (isTaskAddr(to)) return { result: sendFileText((await replyTask($, to, String(input.message ?? ''), files)) as SendFileOut) }
+    if (!isA2a(to)) return { result: `a2a: send_file takes an a2a:<alias> worker from ListAgents or an a2a-task:<id>, not ${to.slice(0, 80) || 'nothing'}.` }
     return { result: sendFileText(await sendFiles($, hostOf($, settingTokens, ui), e.tool_use_id, next, to, files, String(input.message ?? ''))) }
   })
 

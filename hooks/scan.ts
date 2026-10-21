@@ -1,36 +1,32 @@
+import type { Timer } from 'claude-code'
 import type { ScanHit, ScanState, Worker } from '../types/index.d.ts'
-import { A2AError, discover, type Fetcher } from './client.ts'
+import { A2AError } from './client.ts'
 import { fetchWorker, slug, tokenNotes } from './command.ts'
 import { plain } from './format.ts'
+import { NEEDS_NODE, type Sidecar } from './inbound.ts'
 import { loadWorkers, saveWorker, type Host } from './registry.ts'
 import { clock } from './ui/fx.ts'
+import { parseCard } from './wire.ts'
 
-export const DEFAULT_PORTS = [80, 443, 8000, 8080, 41241] as const
+/** The ports A2A workers commonly use, then 41400-41409: the first ten Claude Code sessions on a host. */
+export const DEFAULT_PORTS = [80, 443, 8000, 8080, 41241, 41400, 41401, 41402, 41403, 41404, 41405, 41406, 41407, 41408, 41409] as const
 /** A /16: the widest target one scan takes. */
 const MAX_HOSTS = 65536
-/** Hosts × ports: a /16 on 8 ports. */
-export const MAX_PROBES = MAX_HOSTS * 8
-/** Probes waiting on an answer at once. */
-export const CONCURRENCY = 128
-/**
- * Host requests not yet settled, abandoned ones included. A probe gives up after PROBE_TIMEOUT_MS,
- * but $.http.fetch takes no signal, so the host's request runs on to its own 30 s timeout. Kept
- * under Bun's default of 256 simultaneous fetches, past which requests queue (and would time out
- * here before they were even sent), with room for the session's own requests. The 2.1.305 binary
- * reads BUN_CONFIG_MAX_HTTP_REQUESTS; 256 is Bun's documented default, not read from this build.
- */
-export const MAX_IN_FLIGHT = 192
-export const PROBE_TIMEOUT_MS = 1000
-/** Progress reaches the state, the pane and the status line at most this often. */
+/** Hosts × ports: a /16 on 16 ports, so a /16 on the default ports fits. */
+export const MAX_PROBES = MAX_HOSTS * 16
+/** The scan's progress is read from the sidecar this often: at most four updates a second. */
 export const PROGRESS_MS = 250
 /** Hits kept: the pane lists them all, and its tree has a 100,000-character limit. */
 export const MAX_HITS = 100
+/** Progress reads that may fail in a row before the scan is given up as stopped. */
+const MAX_MISSES = 20
 
 const SCAN_USAGE = [
   'Usage:',
   '  /a2a scan <target> [--ports <list>] [--https]',
   '      target: a CIDR (192.168.1.0/24, up to /16), one IP, or a range 10.0.0.10-10.0.0.50; private addresses only',
-  `      ports: default ${DEFAULT_PORTS.join(',')}; a list like 8000,9000-9010; --https tries https on every port`,
+  '      ports: default 80,443,8000,8080,41241 (A2A workers) and 41400-41409 (Claude Code sessions);',
+  '      a list like 8000,9000-9010; --https tries https on every port',
   '  /a2a scan          where the scan is, or what it found',
   '  /a2a scan stop     cancel it',
 ].join('\n')
@@ -147,87 +143,35 @@ export function probeBase(plan: Plan, i: number): string {
   return `${plan.https || port === 443 ? 'https' : 'http'}://${ip}:${port}`
 }
 
-// ---- the probe pump ----
-
-export type Progress = { done: number; total: number; hits: ScanHit[]; stopped: boolean; finished: boolean }
-
-export type PumpDeps = {
-  fetch: Fetcher
-  /** Rejects when `signal` aborts. */
-  sleep(ms: number, signal?: AbortSignal): Promise<void>
-  now(): number
-  /** Card URL to the alias it is registered under. */
-  known: ReadonlyMap<string, string>
-  stopped(): boolean
-  onProgress(p: Progress): unknown
-  concurrency?: number
-  maxInFlight?: number
-  timeoutMs?: number
-  progressMs?: number
-}
+// ---- the sidecar's hits ----
 
 // One line per field: the card is whoever answered's own text.
 const line = (s: unknown, max: number) => plain(String(s)).replace(/\s+/g, ' ').trim().slice(0, max)
 const SKILLS_KEPT = 6
 
 /**
- * Probes every host and port through `discover`, so a hit is a card the rest of the mod accepts.
- * A refusal, an error, a non-card or no answer within the timeout is a miss, silently.
+ * The sidecar's hits as the mod keeps them: each card through parseCard, so a hit is a card the rest
+ * of the mod accepts; one it refuses is left out. `known` maps a card URL to its registered alias.
  */
-export async function runScan(plan: Plan, d: PumpDeps): Promise<Progress> {
-  const lanes = d.concurrency ?? CONCURRENCY
-  const maxInFlight = Math.max(lanes, d.maxInFlight ?? MAX_IN_FLIGHT)
-  const timeoutMs = d.timeoutMs ?? PROBE_TIMEOUT_MS
-  const every = d.progressMs ?? PROGRESS_MS
-  const hits: ScanHit[] = []
-  const waiting: (() => void)[] = []
-  let next = 0
-  let done = 0
-  let inFlight = 0
-  let reported = -Infinity
-  const progress = (finished: boolean): Progress => ({ done, total: plan.total, hits: [...hits], stopped: !finished && d.stopped(), finished })
-  const report = async (force: boolean) => {
-    const now = d.now()
-    if (!force && now - reported < every) return
-    reported = now
-    await d.onProgress(progress(done === plan.total))
-  }
-  const probe = async (base: string) => {
-    inFlight++
-    const work = discover(d.fetch, base).finally(() => { inFlight--; waiting.shift()?.() })
-    const timer = new AbortController()
+export function hitsOf(raw: unknown, known: ReadonlyMap<string, string>): ScanHit[] {
+  const out: ScanHit[] = []
+  for (const h of Array.isArray(raw) ? raw : []) {
+    if (out.length >= MAX_HITS) break
     try {
-      const got = await Promise.race([work, d.sleep(timeoutMs, timer.signal).then(() => undefined, () => undefined)])
-      if (got && hits.length < MAX_HITS) {
-        const known = d.known.get(got.cardUrl)
-        hits.push({
-          url: base, cardUrl: got.cardUrl, name: line(got.card.name, 80), version: got.card.version,
-          skills: got.card.skills.slice(0, SKILLS_KEPT).map(s => line(s.id || s.name, 40)),
-          ...(known ? { known } : {}),
-        })
-      }
+      const url = new URL(String(h?.url)).origin
+      const cardUrl = String(h?.cardUrl)
+      const card = parseCard(h?.card, cardUrl)
+      const alias = known.get(cardUrl)
+      out.push({
+        url, cardUrl, name: line(card.name, 80), version: card.version,
+        skills: card.skills.slice(0, SKILLS_KEPT).map(s => line(s.id || s.name, 40)),
+        ...(card.kind ? { kind: card.kind } : {}),
+        ...(alias ? { known: alias } : {}),
+      })
     } catch {
-      // A miss.
-    } finally {
-      timer.abort()
-      // The race may have left it running; its rejection is a miss too.
-      work.catch(() => {})
+      // Not a card the mod could add.
     }
   }
-  const lane = async () => {
-    while (!d.stopped() && next < plan.total) {
-      while (inFlight >= maxInFlight) await new Promise<void>(r => waiting.push(r))
-      if (d.stopped()) return
-      const i = next++
-      if (i >= plan.total) return
-      await probe(probeBase(plan, i))
-      done++
-      await report(false)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(lanes, plan.total) }, lane))
-  const out = progress(done === plan.total)
-  await d.onProgress(out)
   return out
 }
 
@@ -259,30 +203,32 @@ export function aliasesFor(hits: readonly ScanHit[], taken: readonly string[], t
 const heading = (s: ScanState, live: boolean) =>
   `${live ? 'Scanning' : s.phase === 'done' ? 'Scan done:' : 'Scan stopped:'} ${s.target}, ports ${s.ports.length > 6 ? `${s.ports.slice(0, 6).join(', ')}… (${s.ports.length})` : s.ports.join(', ')}`
 
-const NOT_SESSIONS = 'Claude Code sessions do not show up in a scan: they serve no A2A endpoint.'
+const kindOf = (h: ScanHit) => (h.kind === 'claude-session' ? 'Claude Code session' : 'A2A worker')
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 
 /** What the scan found, as text with an /a2a add line each: it works where no pane draws. */
 export function resultsText(s: ScanState, taken: readonly string[], tokens: Readonly<Record<string, string>>, live = false): string {
   const head = `${heading(s, live)}\n${progressLine(s)}`
   if (live) return `${head}\n/a2a scan stop cancels it.`
-  if (!s.hits.length) return `${head}\n\nNo A2A worker answered. ${NOT_SESSIONS}`
+  if (!s.hits.length) return `${head}\n\nNo Claude Code session or A2A worker answered.`
   const names = aliasesFor(s.hits, taken, tokens)
   const rows = s.hits.map((h, i) => {
-    const what = `  ${i + 1}. ${line(h.name, 80)}  ${h.url}  (A2A ${h.version})${h.skills.length ? `  skills: ${h.skills.map(k => line(k, 40)).join(', ')}` : ''}`
+    const what = `  ${i + 1}. ${line(h.name, 80)}  ${h.url}  (${kindOf(h)}, A2A ${h.version})${h.skills.length ? `  skills: ${h.skills.map(k => line(k, 40)).join(', ')}` : ''}`
     return h.known ? `${what}\n     already added as ${h.known}` : `${what}\n     /a2a add ${h.url} ${names.get(h.url)}`
   })
   const capped = s.hits.length >= MAX_HITS ? `\n(only the first ${MAX_HITS} are kept)` : ''
-  return `${head}\n\nFound ${s.hits.length}:\n${rows.join('\n')}${capped}\n\nTick the ones to add in the A2A scan pane, or run their /a2a add lines. Nothing is added until you do.`
+  const sessions = s.hits.filter(h => h.kind === 'claude-session').length
+  const kinds = `${plural(sessions, 'Claude Code session')} and ${plural(s.hits.length - sessions, 'A2A worker')}`
+  return `${head}\n\nFound ${s.hits.length} (${kinds}):\n${rows.join('\n')}${capped}\n\nTick the ones to add in the A2A scan pane, or run their /a2a add lines. Nothing is added until you do.`
 }
 
 // ---- running it in the session ----
 
 /** What a scan needs from the session; register.ts builds it from $. */
 export type ScanEnv = {
-  fetch: Fetcher
-  sleep(ms: number, signal?: AbortSignal): Promise<void>
-  /** Runs `fn` after the command has answered: the scan outlives its hook. */
-  later(fn: () => Promise<void>): void
+  /** The sidecar's tools; throws SidecarDown when it is not running. */
+  sidecar: Sidecar
+  every(ms: number, fn: () => void): Timer
   read(): Promise<ScanState | null>
   write(change: (s: ScanState | null) => ScanState | null): Promise<void>
   /** The scan's status line; undefined hands the line back to the tasks. */
@@ -294,7 +240,8 @@ export type ScanEnv = {
 }
 
 // Module state: a reload drops it, and the session.start hook marks a scan it left behind as stopped.
-let active: { stop: boolean } | undefined
+type Run = { timer?: Timer; known: ReadonlyMap<string, string>; busy: boolean; misses: number; ended: boolean }
+let active: Run | undefined
 let statusLine: string | undefined
 
 export const isScanning = () => active !== undefined
@@ -306,6 +253,41 @@ const showProgress = (env: ScanEnv, s: ScanState) => {
   env.status(statusLine)
 }
 
+const why = (err: unknown) => (err instanceof Error ? err.message : String(err))
+
+async function end(env: ScanEnv, host: Host, run: Run, phase: 'done' | 'stopped'): Promise<void> {
+  if (run.ended) return
+  run.ended = true
+  run.timer?.cancel()
+  if (active === run) active = undefined
+  statusLine = undefined
+  env.status(undefined)
+  await env.write(s => s && { ...s, phase: s.phase === 'running' ? phase : s.phase })
+  const s = await env.read()
+  if (s) env.log(resultsText(s, Object.keys(await loadWorkers(host)), host.settingTokens.map))
+}
+
+/** One read of the sidecar's progress into the state, the pane and the status line. */
+async function poll(env: ScanEnv, host: Host, run: Run): Promise<void> {
+  if (run.busy || run.ended) return
+  run.busy = true
+  try {
+    const p = await env.sidecar('scan_progress')
+    run.misses = 0
+    const phase = p.phase === 'done' ? 'done' : p.phase === 'running' ? 'running' : 'stopped'
+    const at = Date.now()
+    const hits = hitsOf(p.hits, run.known)
+    await env.write(s => s && { ...s, done: Math.min(Number(p.done) || 0, s.total), hits, at, phase })
+    const s = await env.read()
+    if (phase !== 'running') await end(env, host, run, phase)
+    else if (s) showProgress(env, s)
+  } catch {
+    if (++run.misses >= MAX_MISSES) await end(env, host, run, 'stopped')
+  } finally {
+    run.busy = false
+  }
+}
+
 export async function scanCommand(env: ScanEnv, host: Host, words: string[]): Promise<string> {
   const taken = async () => Object.keys(await loadWorkers(host))
   if (!words.length) {
@@ -314,20 +296,22 @@ export async function scanCommand(env: ScanEnv, host: Host, words: string[]): Pr
     await env.open()
     return resultsText(s, await taken(), host.settingTokens.map, isScanning())
   }
-  if (words[0] === 'stop' && words.length === 1) {
-    if (!active) return 'No scan is running.'
-    active.stop = true
-    return 'Stopping the scan: it ends once the probes in flight answer or time out, within a second, or up to 30 s when the network is dropping probes.'
-  }
+  if (words[0] === 'stop' && words.length === 1) return stopScan(env, host)
   if (active) {
     const s = await env.read()
     return `a2a: a scan is already running${s ? ` (${s.target}, ${progressLine(s)})` : ''}. One runs at a time; /a2a scan stop cancels it.`
   }
   const plan = planScan(words)
   if (typeof plan === 'string') return plan
-  const run = { stop: false }
+  let started: Record<string, any>
+  try {
+    started = await env.sidecar('scan_start', { first: ipText(plan.hosts.first), last: ipText(plan.hosts.last), ports: plan.ports, https: plan.https })
+  } catch (err) {
+    return `a2a: /a2a scan runs in the a2a-mod sidecar, which is not running (${line(why(err), 200)}). ${NEEDS_NODE}`
+  }
+  if (started.ok !== true) return `a2a: the scan did not start: ${line(started.error ?? 'the sidecar refused it', 200)}.`
+  const run: Run = { known: new Map(Object.values(await loadWorkers(host)).map((w: Worker) => [w.cardUrl, w.alias])), busy: false, misses: 0, ended: false }
   active = run
-  const known = new Map(Object.values(await loadWorkers(host)).map((w: Worker) => [w.cardUrl, w.alias]))
   const startedAt = Date.now()
   const start: ScanState = { phase: 'running', target: plan.target, ports: plan.ports, total: plan.total, done: 0, startedAt, at: startedAt, hits: [], picked: [] }
   try {
@@ -339,48 +323,36 @@ export async function scanCommand(env: ScanEnv, host: Host, words: string[]): Pr
     statusLine = undefined
     throw err
   }
-  env.later(async () => {
-    let last = start
-    try {
-      const out = await runScan(plan, {
-        fetch: env.fetch, sleep: env.sleep, now: () => Date.now(), known, stopped: () => run.stop,
-        onProgress: async p => {
-          last = { ...last, done: p.done, hits: p.hits, at: Date.now(), phase: p.finished ? 'done' : p.stopped ? 'stopped' : 'running' }
-          await env.write(s => s && { ...s, done: last.done, hits: last.hits, at: last.at, phase: last.phase })
-          if (last.phase === 'running') showProgress(env, last)
-        },
-      })
-      if (last.phase === 'running') {
-        last = { ...last, phase: out.finished ? 'done' : 'stopped' }
-        await env.write(s => s && { ...s, phase: last.phase })
-      }
-    } catch {
-      last = { ...last, phase: 'stopped' }
-      await env.write(s => s && { ...s, phase: 'stopped' }).catch(() => {})
-    } finally {
-      active = undefined
-      statusLine = undefined
-      env.status(undefined)
-    }
-    env.log(resultsText(last, await taken(), host.settingTokens.map))
-  })
+  run.timer = env.every(PROGRESS_MS, () => void poll(env, host, run))
   const { hosts, ports } = plan
+  const lanes = Number(started.concurrency) || 0
+  const ms = Number(started.timeoutMs) || 0
   return [
-    `Scanning ${plan.target}: ${count(hosts.count)} host${hosts.count === 1 ? '' : 's'} × ${ports.length} port${ports.length === 1 ? '' : 's'} = ${count(plan.total)} probes, ${CONCURRENCY} at a time, ${PROBE_TIMEOUT_MS / 1000} s each.`,
+    `Scanning ${plan.target}: ${count(hosts.count)} host${hosts.count === 1 ? '' : 's'} × ${ports.length} port${ports.length === 1 ? '' : 's'} = ${count(plan.total)} probes, ${count(lanes)} at once, ${ms / 1000} s a connect; a card is asked for only where a port is open.`,
     'Progress shows in the A2A scan pane and on the status line. /a2a scan shows where it is; /a2a scan stop cancels it.',
     'Only scan networks you are allowed to scan: a sweep can trip an intrusion detection system.',
   ].join('\n')
 }
 
-export function stopScan(): void {
-  if (active) active.stop = true
+/** Stops the scan in the sidecar, which closes every probe at once, and settles it here. */
+export async function stopScan(env: ScanEnv, host: Host): Promise<string> {
+  const run = active
+  if (!run) return 'No scan is running.'
+  try { await env.sidecar('scan_stop') } catch {}
+  run.busy = false
+  await poll(env, host, run)
+  if (!run.ended) await end(env, host, run, 'stopped')
+  const s = await env.read()
+  return `Stopped the scan${s ? `: ${progressLine(s)}` : ''}.`
 }
 
-/** A scan a reload cut short still says running in the state; it is stopped. */
+/** A scan a reload cut short still says running in the state; it is stopped, in the sidecar too. */
 export async function settleOrphan(env: ScanEnv): Promise<void> {
   if (active) return
   const s = await env.read()
-  if (s?.phase === 'running') await env.write(held => held && { ...held, phase: 'stopped' })
+  if (s?.phase !== 'running') return
+  await env.write(held => held && { ...held, phase: 'stopped' })
+  try { await env.sidecar('scan_stop') } catch {}
 }
 
 export const togglePick = (env: ScanEnv, url: string) =>

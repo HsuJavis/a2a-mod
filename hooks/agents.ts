@@ -1,18 +1,29 @@
 import type { Worker } from '../types/index.d.ts'
 import type { FileIn } from './wire.ts'
+import { endpointLine, waitingSection, type ServerStatus } from './inbound.ts'
 
 // The registered workers as the engine's own agent tools see them: ListAgents and /list-agents list
 // them as a2a:<alias>, and SendMessage or SendFile to one goes through this mod. Every other recipient is the engine's.
 
 export const isA2a = (to: unknown): boolean => typeof to === 'string' && to.startsWith('a2a:')
 
-/** The section ListAgents and /list-agents gain: the registered workers, or nothing when there are none. */
-export function workersSection(workers: Worker[]): string | undefined {
-  if (!workers.length) return undefined
-  return [
-    'A2A workers (a2a-mod; SendMessage or SendFile with to: "a2a:<alias>"):',
-    ...workers.map(w => `  a2a:${w.alias}  ${w.name}. ${w.description}`.trimEnd()),
-  ].join('\n')
+const SEND_TO = 'SendMessage or SendFile with to: "a2a:<alias>"'
+
+/**
+ * The sections ListAgents and /list-agents gain: this session's own endpoint while it serves one,
+ * the registered Claude Code sessions, the registered workers, and the tasks waiting for Claude's
+ * reply. Empty when there is none of these.
+ */
+export function agentSections(workers: Worker[], server?: ServerStatus): string[] {
+  const out: string[] = []
+  if (server?.on) out.push(endpointLine(server))
+  const sessions = workers.filter(w => w.kind === 'claude-session')
+  const others = workers.filter(w => w.kind !== 'claude-session')
+  if (sessions.length) out.push([`Claude Code sessions (a2a-mod; ${SEND_TO}):`, ...sessions.map(w => `  a2a:${w.alias}  ${w.name}`)].join('\n'))
+  if (others.length) out.push([`A2A workers (a2a-mod; ${SEND_TO}):`, ...others.map(w => `  a2a:${w.alias}  ${w.name}. ${w.description}`.trimEnd())].join('\n'))
+  const waiting = server?.on ? waitingSection(server) : undefined
+  if (waiting) out.push(waiting)
+  return out
 }
 
 /** Whether a send's answer is a send, not a refusal: the worker send's failures start so. */

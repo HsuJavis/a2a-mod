@@ -1,7 +1,7 @@
 {
   "name": "a2a-mod",
   "version": "0.8.0",
-  "description": "A2A protocol client for Claude Code: Claude hands tasks to non-Claude worker agents over Agent2Agent and picks up their results. Registered workers show in ListAgents and take SendMessage as a2a:<alias>.",
+  "description": "A2A for Claude Code: every session serves an A2A endpoint, so Claude sessions and A2A workers hand each other tasks and files. Registered workers and sessions show in ListAgents and take SendMessage as a2a:<alias>; /a2a scan finds them on a private network.",
   "author": {
     "name": "HsuJavis",
     "url": "https://github.com/HsuJavis"
@@ -16,7 +16,8 @@
     "orchestration",
     "agents",
     "interop",
-    "mod"
+    "mod",
+    "claude-code-sessions"
   ],
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -42,6 +43,36 @@
       "title": "Worker tokens",
       "description": "alias=token pairs separated by spaces, e.g. \"w1=abc w2=def\"",
       "sensitive": true
+    },
+    "server": {
+      "type": "boolean",
+      "title": "A2A endpoint",
+      "description": "On: this session serves an A2A endpoint (first free port in 41400-41499), so other Claude Code sessions and A2A agents can send it tasks. Off: no listening socket.",
+      "default": true
+    },
+    "serverToken": {
+      "type": "string",
+      "title": "A2A endpoint token",
+      "description": "Empty: open, anyone who can reach the port can message this session. Set: senders must send it as a Bearer token (they register this session with that token).",
+      "sensitive": true
+    },
+    "serverName": {
+      "type": "string",
+      "title": "A2A endpoint name",
+      "description": "The name on this session's Agent Card. Empty: <hostname>/<folder>."
+    }
+  },
+  "mcpServers": {
+    "sidecar": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/sidecar/a2a-server.mjs"
+      ],
+      "env": {
+        "A2A_MOD_SERVER": "${user_config.server}",
+        "A2A_MOD_SERVER_TOKEN": "${user_config.serverToken}",
+        "A2A_MOD_SERVER_NAME": "${user_config.serverName}"
+      }
     }
   }
 }

@@ -68,7 +68,7 @@ export async function addWorkerTool(host: Host, confirm: Confirm, input: { url?:
     const skills = w.skills.slice(0, SKILLS_SHOWN).map(s => line(s.name || s.id, 40)).join(', ') || 'none listed'
     const more = w.skills.length > SKILLS_SHOWN ? ` (+${w.skills.length - SKILLS_SHOWN} more)` : ''
     const question = [
-      'Let Claude add this A2A worker?',
+      `Let Claude add this ${w.kind === 'claude-session' ? 'Claude Code session' : 'A2A worker'}?`,
       `Name: ${line(w.name, 80)}`,
       `Alias: ${line(w.alias, 40)}${kept ? ' (already registered: this refreshes its card; its token source and trusted endpoint stay as they are)' : ''}`,
       `Endpoint: ${plain(endpointOrigin)}`,

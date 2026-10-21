@@ -93,7 +93,7 @@ export type PaneView = { open: string[]; replying: string[]; collapsed: string[]
 export type SentReply = { worker: string; taskId: string; text: string }
 
 /** One Agent Card a network scan found. `known` is the alias it is already registered under. */
-export type ScanHit = { url: string; cardUrl: string; name: string; version: ProtocolVersion; skills: string[]; known?: string }
+export type ScanHit = { url: string; cardUrl: string; name: string; version: ProtocolVersion; skills: string[]; kind?: 'claude-session'; known?: string }
 
 /** The last `/a2a scan`: its progress while it runs, then what it found and what the person picked to add. */
 export type ScanState = {

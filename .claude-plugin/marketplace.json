@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "a2a-mod",
-      "description": "A2A protocol client for Claude Code: Claude hands tasks to non-Claude worker agents over Agent2Agent and picks up their results. Registered workers show in ListAgents and take SendMessage as a2a:<alias>.",
+      "description": "A2A for Claude Code: every session serves an A2A endpoint, so Claude sessions and A2A workers hand each other tasks and files. Registered workers and sessions show in ListAgents and take SendMessage as a2a:<alias>; /a2a scan finds them on a private network.",
       "source": "./",
       "category": "development"
     }

@@ -10,7 +10,7 @@ export const USAGE = [
   '      (re-run to refresh; with no token flag the token comes from the tokens setting)',
   '  /a2a list',
   '  /a2a remove <alias>',
-  '  /a2a scan <cidr | ip | from-to> [--ports <list>] [--https]   find workers on a private network',
+  '  /a2a scan <cidr | ip | from-to> [--ports <list>] [--https]   find workers and Claude Code sessions on a private network',
   '  /a2a scan stop',
   '',
   'Never type a token here: slash commands are kept in the transcript.',
@@ -39,7 +39,8 @@ function source(auth: TokenSource): string {
 function describe(w: Worker, tokens: Readonly<Record<string, string>>): string {
   const skills = w.skills.map(s => `${s.id}: ${s.description || s.name}`).join('; ') || 'no skills listed'
   const hasToken = w.needsAuth || w.auth.kind !== 'setting' || own(tokens, w.alias) !== undefined
-  return `${w.alias}  ${w.name} (A2A ${w.version}${hasToken ? `, ${source(w.auth)}` : ''})\n    ${w.description}\n    skills: ${skills}`
+  const kind = w.kind === 'claude-session' ? 'Claude Code session, ' : ''
+  return `${w.alias}  ${w.name} (${kind}A2A ${w.version}${hasToken ? `, ${source(w.auth)}` : ''})\n    ${w.description}\n    skills: ${skills}`
 }
 
 async function add(host: Host, words: string[]): Promise<string> {
@@ -68,7 +69,7 @@ async function add(host: Host, words: string[]): Promise<string> {
   const fetched = await fetchWorker(host, url, alias, auth)
   const w: Worker = trust ? { ...fetched, trustedOrigin: new URL(fetched.endpoint).origin } : fetched
   await saveWorker(host, w)
-  return [`Added worker:\n${describe(w, host.settingTokens.map)}`, ...tokenNotes(host, w)].join('\n\n')
+  return [`Added ${w.kind === 'claude-session' ? 'Claude Code session' : 'worker'}:\n${describe(w, host.settingTokens.map)}`, ...tokenNotes(host, w)].join('\n\n')
 }
 
 /** Discovery and the Worker record that `/a2a add` and the add_worker tool both store. */

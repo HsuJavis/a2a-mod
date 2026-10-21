@@ -230,7 +230,7 @@ test('a scan where every host answers keeps the first hits and its pane stays un
   await runA2a($, 'scan 10.0.0.0/25 --ports 8000')
   sc.scanTo({ phase: 'done', hits: Array.from({ length: MAX_HITS }, (_, i) => scanHit(`http://10.0.0.${i + 1}:8000`, long)) })
   const text = await finished($, clock)
-  expect(text).toContain(`Found ${MAX_HITS}:`)
+  expect(text).toContain(`Found ${MAX_HITS} (0 Claude Code sessions and ${MAX_HITS} A2A workers):`)
   expect(text).toContain(`only the first ${MAX_HITS} are kept`)
   const pane = await mountScan($, 'terminal')
   const tree = JSON.stringify(await pane.drawn())

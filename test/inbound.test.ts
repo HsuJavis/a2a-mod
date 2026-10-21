@@ -43,7 +43,7 @@ test('a message sent with the serverToken says so; a follow-up says it answers t
   const prompts = promptLog(on)
   const sc = fakeSidecar(on, { status: { auth: 'token' } })
   await startSession($, on)
-  sc.inbox.push({ ...INBOUND, authenticated: true }, { ...INBOUND, taskId: 'task-2', followUp: true, text: 'Tuesday' })
+  sc.inbox.push({ ...INBOUND, authenticated: true }, { ...INBOUND, taskId: 'task-2', followUp: true, text: 'Tuesday', authenticated: true })
   await clock.advance(POLL_IN_MS)
   expect(prompts.length).toBe(1)
   expect(prompts[0]!.text).toContain('sent with this session’s serverToken')

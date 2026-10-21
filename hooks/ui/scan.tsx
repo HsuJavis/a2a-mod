@@ -45,9 +45,10 @@ export function scanTree(el: Pick<PaneEls, 'Box' | 'Text' | 'Button'>, d: ScanDa
       <Text>{fit(progressLine(s), inner)}</Text>
       {live ? <Box><Button key="scan-stop" label="Stop" onPress={() => act.stop()} /></Box> : null}
       {rule}
-      {s.hits.length ? null : <Text color="inactive">{fit(live ? 'Nothing found yet.' : 'No A2A worker answered.', inner)}</Text>}
+      {s.hits.length ? null : <Text color="inactive">{fit(live ? 'Nothing found yet.' : 'No session or worker answered.', inner)}</Text>}
       {s.hits.map(hit => {
-        const detail = fit(`   ${hit.url} · A2A ${hit.version}${hit.skills.length ? ` · ${hit.skills.join(', ')}` : ''}`, inner)
+        const kind = hit.kind === 'claude-session' ? 'Claude Code session' : 'A2A worker'
+        const detail = fit(`   ${kind} · ${hit.url} · A2A ${hit.version}${hit.skills.length && !hit.kind ? ` · ${hit.skills.join(', ')}` : ''}`, inner)
         if (hit.known) {
           return (
             <Box flexDirection="column">
@@ -70,7 +71,7 @@ export function scanTree(el: Pick<PaneEls, 'Box' | 'Text' | 'Button'>, d: ScanDa
       {!live && s.picked.length ? <Box marginTop={1}><Button key="scan-add" variant="primary" label={`Add selected (${s.picked.length})`} onPress={() => act.add()} /></Box> : null}
       <Box flexGrow={1} />
       {rule}
-      <Text color="inactive">{fit(live ? '/a2a scan stop cancels' : 'Claude Code sessions never show up here', inner)}</Text>
+      <Text color="inactive">{fit(live ? '/a2a scan stop cancels' : 'Tick to add; nothing is added until you do', inner)}</Text>
     </Box>
   )
 }
