@@ -6,6 +6,7 @@ import { A2AError, cancelTask, getTask, send } from './client.ts'
 import { runCommand, USAGE } from './command.ts'
 import { describeOutcome, FULL_MAX, wakeDetail, wakeLine } from './format.ts'
 import { downText, framed, isTaskAddr, messagesOf, POLL_IN_MS, replyText, resultOf, SIDECAR, SIDECAR_DENY, SIDECAR_TOOL_NAMES, SidecarDown, statusOf, statusText, taskAddr, toastText, type ServerStatus, type Sidecar } from './inbound.ts'
+import { lanFetch } from './lan.ts'
 import { addWorkerTool, removeWorkerTool, type Confirm } from './manage.ts'
 import { changeRecent, isOpen, isWaiting, noteCall, noteSent, noteState, readRecent, visible } from './recent.ts'
 import { loadWorkers, noteFailure, own, parseTokens, splitArgs, targetOf, workerOr, type Host, type SettingTokens } from './registry.ts'
@@ -60,7 +61,8 @@ const pendingWakes: { text: string; detail: string }[] = []
 
 function hostOf($: Engine, settingTokens: SettingTokens, ui: UiSettings): Host {
   return {
-    fetch: (url, init) => $.http.fetch(url, init),
+    // Through the sidecar for a host Claude Code itself may not reach (macOS Local Network privacy).
+    fetch: lanFetch((url, init) => $.http.fetch(url, init), sidecarOf($)),
     readWorkers: () => $.store.get('workers'),
     writeWorkers: all => $.store.set('workers', all),
     settingTokens,

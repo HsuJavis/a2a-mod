@@ -377,7 +377,7 @@ export async function addPicked(env: ScanEnv, host: Host): Promise<void> {
       added.set(url, alias)
       said.push(...tokenNotes(host, w))
     } catch (err) {
-      said.push(`Could not add ${hit.url}: ${line(err instanceof Error ? err.message : String(err), 200)}`)
+      said.push(`Could not add ${hit.url}: ${line(err instanceof Error ? err.message : String(err), 500)}`)
     }
   }
   await env.write(held => held && {

@@ -168,6 +168,8 @@ When it ends, tick the ones you want in the pane and press **Add selected**. The
 
 **Network etiquette.** A scan is many connections to many machines in a short time. Corporate networks, hotel and campus Wi-Fi and cloud VPCs often watch for exactly that, and an intrusion detection system may flag or block your machine. Scan only networks you own or are allowed to scan. The cards that answer are their servers' own text: the mod strips control characters from them, but read a card before you add it.
 
+**Troubleshooting: `EHOSTUNREACH` on macOS.** If the scan finds a session or worker on your LAN but adding or messaging it fails with `EHOSTUNREACH` (or `ENETUNREACH`), macOS Local Network privacy is keeping Claude Code itself off the LAN, while the node sidecar it started is allowed. Since 0.9.1 the mod then makes the request again through the sidecar and sends that host's later requests the same way for the rest of the session, so it usually just works. If the sidecar is not running, or cannot reach the host either, the error says so: allow your terminal app under **System Settings → Privacy & Security → Local Network**, then restart it. A refused connection (`ECONNREFUSED`) is not retried: nothing listens on that port.
+
 ### 在網路上找 worker 和 session（繁體中文）
 
 不知道 worker 或 session 的網址時，可以掃描：
@@ -191,6 +193,8 @@ When it ends, tick the ones you want in the pane and press **Add selected**. The
 - Claude 沒有掃描工具：掃網路這件事由你自己發動。
 
 **網路禮儀。** 掃描是在短時間內連很多台機器。公司網路、飯店與校園 Wi-Fi、雲端 VPC 常常專門偵測這種行為，入侵偵測系統可能會標記或封鎖你的機器。只掃你擁有或被允許掃描的網路。回應的卡片是對方伺服器自己的文字：mod 會去掉控制字元，但加入前還是先看一下卡片內容。
+
+**疑難排解：macOS 上的 `EHOSTUNREACH`。** 如果掃描找得到區網上的 session 或 worker，但加入或傳訊息時出現 `EHOSTUNREACH`（或 `ENETUNREACH`），是 macOS 的「區域網路」隱私權限擋住了 Claude Code 本身連區網，而它啟動的 node sidecar 是被允許的。從 0.9.1 起，mod 遇到這種錯誤會改由 sidecar 重送同一個請求，並在本 session 剩下的時間裡，對同一台主機都直接走 sidecar，所以通常不用做什麼就能用。若 sidecar 沒在跑、或 sidecar 也連不到，錯誤訊息會說明：到 **系統設定 → 隱私權與安全性 → 區域網路** 允許你的終端機 app，然後重新開啟它。連線被拒（`ECONNREFUSED`）不會重試：那個 port 沒有東西在聽。
 
 ## Workers in Claude Code's agent tools
 

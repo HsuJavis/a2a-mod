@@ -37,14 +37,19 @@ export function fakeNet(on: On, routes: Partial<Record<Route, Answer>> = {}) {
     calls.push({ url: e.url, init: e.init })
     if (state.down) return reply({ status: 503, ok: false, headers: {}, text: 'down' })
     if (state.status !== 200) return reply({ status: state.status, ok: false, headers: {}, text: '' })
-    const body = e.init?.body ? JSON.parse(e.init.body) : undefined
-    const route: Route = e.url.endsWith('agent-card.json') ? 'card'
-      : /send/i.test(body?.method) ? 'send' : /cancel/i.test(body?.method) ? 'cancel' : 'get'
-    const answer = routes[route] ?? DEFAULTS[route]
-    const json = typeof answer === 'function' ? (answer as (b: any) => unknown)(body) : answer
-    return reply({ status: 200, ok: true, headers: { 'content-type': 'application/json' }, text: JSON.stringify(json) })
+    return reply(workerAnswer(routes, e.url, e.init?.body))
   })
   return { calls, state }
+}
+
+/** What the fake worker answers one request with: its card, or the JSON-RPC route the body names. */
+export function workerAnswer(routes: Partial<Record<Route, Answer>>, url: string, text?: string): HttpResponse {
+  const body = text ? JSON.parse(text) : undefined
+  const route: Route = url.endsWith('agent-card.json') ? 'card'
+    : /send/i.test(body?.method) ? 'send' : /cancel/i.test(body?.method) ? 'cancel' : 'get'
+  const answer = routes[route] ?? DEFAULTS[route]
+  const json = typeof answer === 'function' ? (answer as (b: any) => unknown)(body) : answer
+  return { status: 200, ok: true, headers: { 'content-type': 'application/json' }, text: JSON.stringify(json) }
 }
 
 /** mock.store that also lets the test read what the mod left in it: the test's own `$` has no store. */
@@ -322,10 +327,10 @@ export const INBOUND = {
 type ScanProgress = { phase: string; done: number; total: number; open?: number; hits: unknown[]; startedAt?: number; at?: number }
 
 /**
- * The sidecar over $.mcp, in memory: status, inbox, reply and the scan tools. `down` makes
+ * The sidecar over $.mcp, in memory: status, inbox, reply, http and the scan tools. `down` makes
  * $.mcp.connect fail. The scan moves only when the test says so (`scanTo`).
  */
-export function fakeSidecar(on: On, opts: { status?: Record<string, unknown>; down?: string; cwd?: string; reply?: (args: Record<string, unknown>) => unknown } = {}) {
+export function fakeSidecar(on: On, opts: { status?: Record<string, unknown>; down?: string; cwd?: string; reply?: (args: Record<string, unknown>) => unknown; http?: (args: Record<string, any>) => unknown } = {}) {
   on('session.cwd', async () => ({ value: opts.cwd ?? '/work' }))
   const calls: { tool: string; args: Record<string, unknown> }[] = []
   const inbox: unknown[] = []
@@ -353,6 +358,13 @@ export function fakeSidecar(on: On, opts: { status?: Record<string, unknown>; do
         out = scan.phase === 'running' ? { ok: true, phase: 'stopped', done: scan.done } : { ok: false, phase: scan.phase, error: 'no scan is running' }
         if (scan.phase === 'running') scan = { ...scan, phase: 'stopped' }
         break
+      // The sidecar's own fetch reaches the fake worker; as the real tool, it says no `ok`.
+      case 'http': {
+        if (opts.http) { out = opts.http(a); break }
+        const { status, headers, text } = workerAnswer({}, String(a.url), a.body as string | undefined)
+        out = { status, headers, text }
+        break
+      }
       default: out = { error: `unknown tool ${e.tool}` }
     }
     return { value: { content: [{ type: 'text', text: JSON.stringify(out) }], isError: false, structuredContent: out } }

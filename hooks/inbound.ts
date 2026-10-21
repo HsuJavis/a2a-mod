@@ -7,7 +7,7 @@ import { plain, printable } from './format.ts'
 
 /** The sidecar's key in plugin.json's mcpServers. */
 export const SIDECAR = 'sidecar'
-const TOOLS = ['status', 'inbox', 'reply', 'scan_start', 'scan_progress', 'scan_stop'] as const
+const TOOLS = ['status', 'inbox', 'reply', 'scan_start', 'scan_progress', 'scan_stop', 'http'] as const
 /** The sidecar's tools as the model would see them: only the mod calls them. */
 export const SIDECAR_TOOL_NAMES = TOOLS.map(t => `mcp__plugin_a2a-mod_${SIDECAR}__${t}`)
 export const SIDECAR_DENY = 'a2a-mod runs this tool itself. To answer an A2A message, use SendMessage (or SendFile) with to: "a2a-task:<id>"; ListAgents lists the agents to message.'

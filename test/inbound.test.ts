@@ -121,7 +121,7 @@ test('SendFile to a2a-task:<id> replies with the files, relative paths from the 
 test('the model may not call the sidecar’s own tools; the mod may', async ($, on) => {
   mock.store(on)
   fakeSidecar(on)
-  expect(SIDECAR_TOOL_NAMES.length).toBe(6)
+  expect(SIDECAR_TOOL_NAMES.length).toBe(7)
   for (const tool of SIDECAR_TOOL_NAMES) {
     const verdict = await $.tool.check({ tool, input: {} })
     expect(verdict.decision).toBe('deny')

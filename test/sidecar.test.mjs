@@ -105,7 +105,7 @@ test('the MCP side: initialize, ping, the tool list and a status with the endpoi
   a.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n')
   assert.deepEqual((await a.rpc('ping')).result, {})
   const names = (await a.rpc('tools/list')).result.tools.map(x => x.name).sort()
-  assert.deepEqual(names, ['inbox', 'reply', 'scan_progress', 'scan_start', 'scan_stop', 'status'])
+  assert.deepEqual(names, ['http', 'inbox', 'reply', 'scan_progress', 'scan_start', 'scan_stop', 'status'])
   sa = await a.call('status')
   sb = await b.call('status')
   for (const s of [sa, sb]) {
@@ -388,6 +388,74 @@ test('scan stop is immediate, even with every probe hanging on a silent card', a
   const after = (await a.call('scan_progress')).done
   await new Promise(r => setTimeout(r, 300))
   assert.equal((await a.call('scan_progress')).done, after)
+})
+
+// ---------- http: the mod's requests through the sidecar (macOS Local Network privacy) ----------
+
+/** A loopback server for the http tool: echoes, never answers, or sends more than the cap. */
+async function httpTarget() {
+  const server = http.createServer((req, res) => {
+    if (req.url === '/hang') return
+    if (req.url === '/huge') {
+      res.writeHead(200, { 'content-type': 'application/octet-stream' })
+      const chunk = Buffer.alloc(MiB, 'x')
+      let left = 17
+      const more = () => { while (left > 0) { left--; if (!res.write(chunk)) return res.once('drain', more) } res.end() }
+      return more()
+    }
+    const chunks = []
+    req.on('data', c => chunks.push(c))
+    req.on('end', () => {
+      const status = req.url === '/missing' ? 404 : 200
+      res.writeHead(status, { 'content-type': 'application/json', 'x-seen': 'yes' })
+      res.end(JSON.stringify({ method: req.method, url: req.url, auth: req.headers.authorization ?? null, body: Buffer.concat(chunks).toString('utf8') }))
+    })
+  })
+  await new Promise(r => server.listen(0, '127.0.0.1', r))
+  closers.push(() => new Promise(r => { server.closeAllConnections(); server.close(() => r()) }))
+  return `http://127.0.0.1:${server.address().port}`
+}
+const MiB = 1024 * 1024
+
+test('the http tool GETs and POSTs for the mod, and a 404 is a status, not an error', async () => {
+  const base = await httpTarget()
+  const got = await a.call('http', { url: `${base}/card`, method: 'GET', headers: { Accept: 'application/json' } })
+  assert.equal(got.isError, false)
+  assert.equal(got.status, 200)
+  assert.equal(got.headers['x-seen'], 'yes')
+  assert.equal('ok' in got, false)
+  assert.deepEqual(JSON.parse(got.text), { method: 'GET', url: '/card', auth: null, body: '' })
+  const posted = await a.call('http', { url: `${base}/a2a`, method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer t' }, body: '{"jsonrpc":"2.0"}' })
+  assert.deepEqual(JSON.parse(posted.text), { method: 'POST', url: '/a2a', auth: 'Bearer t', body: '{"jsonrpc":"2.0"}' })
+  const missing = await a.call('http', { url: `${base}/missing` })
+  assert.equal(missing.status, 404)
+  assert.equal(missing.isError, false)
+})
+
+test('the http tool gives up at its timeout, refuses a response over 16 MiB and any scheme but http and https', async () => {
+  const base = await httpTarget()
+  const t0 = Date.now()
+  const hung = await a.call('http', { url: `${base}/hang`, timeoutMs: 300 })
+  assert.match(hung.error, /did not answer within 300 ms/)
+  assert.equal(hung.isError, true)
+  assert.ok(Date.now() - t0 < 5000)
+  const huge = await a.call('http', { url: `${base}/huge` })
+  assert.match(huge.error, /over 16 MiB/)
+  for (const url of ['file:///etc/passwd', 'ftp://127.0.0.1/x', 'data:text/plain,hi']) {
+    const out = await a.call('http', { url })
+    assert.match(out.error, /only http and https/, url)
+  }
+  assert.match((await a.call('http', { url: 'not a url' })).error, /not a URL/)
+})
+
+test('the http tool says why a host is unreachable by its error code', async () => {
+  // A port nothing listens on: refused, the code is in the error.
+  const s = net.createServer()
+  await new Promise(r => s.listen(0, '127.0.0.1', r))
+  const port = s.address().port
+  await new Promise(r => s.close(r))
+  const out = await a.call('http', { url: `http://127.0.0.1:${port}/` })
+  assert.match(out.error, /ECONNREFUSED/)
 })
 
 // ---------- the official SDK as the A2A worker side ----------

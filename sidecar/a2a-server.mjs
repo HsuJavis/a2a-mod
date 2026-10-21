@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // a2a-mod sidecar: a stdio MCP server (newline-delimited JSON-RPC 2.0) that only the mod drives,
-// plus this session's A2A endpoint over HTTP and the network scan.
+// plus this session's A2A endpoint over HTTP, the network scan, and the mod's own HTTP requests.
 //
 // A mod cannot listen on a socket or open a raw TCP connection, so this process does both. The
 // engine starts one per session from plugin.json's mcpServers; the switch, token and name come in
@@ -26,7 +26,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { pipeline } from 'node:stream/promises'
 
-const VERSION = '0.9.0'
+const VERSION = '0.9.1'
 const DEFAULT_PORTS = '41400-41499'
 const MiB = 1024 * 1024
 /** One JSON-RPC request: room for 10 MiB of inline files as base64. */
@@ -517,6 +517,43 @@ function scanStop() {
 
 const scanProgress = () => ({ phase: scan.phase, done: scan.done, total: scan.total, open: scan.open ?? 0, hits: scan.hits, startedAt: scan.startedAt, at: scan.at, elapsedMs: (scan.phase === 'running' ? now() : scan.at) - scan.startedAt })
 
+// ---------- http: the mod's requests, for a host Claude Code itself may not reach ----------
+
+// On macOS, Local Network privacy can keep the Claude Code process off the LAN while this node
+// process reaches it; the mod sends such a request here. Text in, text out, as $.http.fetch.
+const HTTP_MAX = 16 * MiB
+const HTTP_TIMEOUT_MS = 30_000
+
+async function httpRequest({ url, method = 'GET', headers = {}, body, timeoutMs } = {}) {
+  let u
+  try { u = new URL(String(url)) } catch { return { error: `not a URL: ${String(url).slice(0, 200)}` } }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { error: `only http and https URLs are fetched, not ${u.protocol}` }
+  const ms = Number(timeoutMs) > 0 ? Math.min(Number(timeoutMs), 120_000) : HTTP_TIMEOUT_MS
+  const abort = new AbortController()
+  const tooBig = { error: `the response is over ${HTTP_MAX / MiB} MiB` }
+  let why
+  const stop = reason => { why = reason; abort.abort() }
+  const timer = setTimeout(() => stop({ error: `${u.origin} did not answer within ${ms} ms` }), ms)
+  try {
+    const res = await fetch(u, { method: String(method), headers, body: body === undefined ? undefined : String(body), signal: abort.signal, redirect: 'follow' })
+    if (Number(res.headers.get('content-length')) > HTTP_MAX) { stop(tooBig); return tooBig }
+    const chunks = []
+    let n = 0
+    for await (const c of res.body ?? []) {
+      n += c.length
+      if (n > HTTP_MAX) { stop(tooBig); return tooBig }
+      chunks.push(c)
+    }
+    return { status: res.status, headers: Object.fromEntries(res.headers), text: Buffer.concat(chunks).toString('utf8') }
+  } catch (e) {
+    if (why) return why
+    const c = e?.cause
+    return { error: c?.code ? `${c.code}: ${c.message ?? ''}`.trim() : String(e?.message ?? e) }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // ---------- MCP ----------
 
 const obj = { type: 'object' }
@@ -533,6 +570,10 @@ const TOOLS = [
   },
   { name: 'scan_progress', description: 'a2a-mod plumbing: where the scan is.', inputSchema: { ...obj, properties: {} } },
   { name: 'scan_stop', description: 'a2a-mod plumbing: stop the scan.', inputSchema: { ...obj, properties: {} } },
+  {
+    name: 'http', description: 'a2a-mod plumbing: one HTTP request for the mod.',
+    inputSchema: { ...obj, properties: { url: { type: 'string' }, method: { type: 'string' }, headers: { type: 'object', additionalProperties: { type: 'string' } }, body: { type: 'string' }, timeoutMs: { type: 'integer' } }, required: ['url'] },
+  },
 ]
 
 function status() {
@@ -567,6 +608,7 @@ async function callTool(name, args) {
     case 'scan_start': return scanStart(args)
     case 'scan_progress': return scanProgress()
     case 'scan_stop': return scanStop()
+    case 'http': return httpRequest(args ?? {})
     default: return { error: `unknown tool ${String(name).slice(0, 60)}` }
   }
 }

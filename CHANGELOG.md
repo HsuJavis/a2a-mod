@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-21
+
+### Fixed
+
+- On macOS, adding, messaging, polling or cancelling a worker or session on the LAN could fail with `EHOSTUNREACH` even though `/a2a scan` found it: Local Network privacy can keep the Claude Code process (whose `$.http.fetch` the mod uses) off the LAN while the node sidecar it starts reaches it. A request whose direct fetch fails with `EHOSTUNREACH`, `ENETUNREACH`, `EPERM`, `EACCES` or a Local Network error is now made again through the sidecar's new `http` tool (http and https only, 30 s, at most 16 MiB of response), and that host goes through the sidecar for the rest of the session. A refused connection (`ECONNREFUSED`) is an answer and is not retried. When the sidecar is not running or cannot reach the host either, the error says so and adds how to allow the terminal app under System Settings → Privacy & Security → Local Network. Like the sidecar's other tools, `http` is the mod's own: the model is denied it.
+- A pane **Add selected** failure is shown up to 500 characters instead of 200, so that hint is not cut off.
+
 ## [0.9.0] - 2026-10-21
 
 ### Added
